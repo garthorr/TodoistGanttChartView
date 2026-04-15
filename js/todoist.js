@@ -1,5 +1,5 @@
 /**
- * Todoist Gantt Chart — modernized.
+ * Ganttist — a Gantt viewer for Todoist.
  *
  * Uses the Todoist REST API v2 (Bearer token, JSON) and Frappe Gantt.
  * No jQuery, no build step, no server needed.

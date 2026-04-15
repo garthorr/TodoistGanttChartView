@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="images/logo.svg" alt="Todoist Gantt Chart" width="96" height="96" />
+  <img src="images/logo.svg" alt="Ganttist" width="96" height="96" />
 </p>
 
-<h1 align="center">Todoist Gantt Chart View</h1>
+<h1 align="center">Ganttist</h1>
 
 <p align="center">
-  A lightweight, self-hostable web app that renders your
-  <a href="https://todoist.com/">Todoist</a> projects as an interactive Gantt
-  chart. Powered by the current Todoist REST API v2 and
+  A lightweight, self-hostable Gantt viewer for your
+  <a href="https://todoist.com/">Todoist</a> projects. Powered by the current
+  Todoist REST API v2 and
   <a href="https://frappe.io/gantt">Frappe Gantt</a>.
 </p>
 
@@ -61,8 +61,8 @@ docker compose up -d --build
 Or without compose:
 
 ```bash
-docker build -t todoist-gantt .
-docker run -d --name todoist-gantt -p 8080:80 --restart unless-stopped todoist-gantt
+docker build -t ganttist .
+docker run -d --name ganttist -p 8080:80 --restart unless-stopped ganttist
 ```
 
 Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the proxy at the container on port 80. No environment variables are needed — the app runs entirely in the user's browser and never sees the Todoist token.
@@ -87,7 +87,7 @@ All calls send `Authorization: Bearer <your-token>`.
 
 ## Branding
 
-The logo and favicon are an original mark inspired by the Todoist aesthetic (rounded red square) but redrawn with Gantt-style staggered bars and a subtle vertical gradient to distinguish it from the official Todoist logo. "Todoist" is a trademark of Doist Ltd.; this project is an unaffiliated third-party client.
+**Ganttist** is an unaffiliated third-party Todoist client. The wordmark is set in a system serif (Apple's *New York* on macOS/iOS, Georgia elsewhere) paired with a sans-serif UI. The logo and favicon are original marks inspired by the Todoist aesthetic (rounded red square) but redrawn with Gantt-style staggered bars and a subtle vertical gradient so they read as a distinct mark. "Todoist" is a trademark of Doist Ltd.
 
 ## License
 

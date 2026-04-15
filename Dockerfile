@@ -1,4 +1,4 @@
-# Todoist Gantt Chart View — static site served by nginx.
+# Ganttist — static Gantt viewer for Todoist, served by nginx.
 # There's no build step (no bundler, no package.json), so a single-stage
 # image is enough. Image size is ~25 MB.
 

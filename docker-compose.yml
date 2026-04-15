@@ -1,8 +1,8 @@
 services:
-  todoist-gantt:
+  ganttist:
     build: .
-    image: todoist-gantt:latest
-    container_name: todoist-gantt
+    image: ganttist:latest
+    container_name: ganttist
     ports:
       - "8080:80"
     restart: unless-stopped
