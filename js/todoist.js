@@ -1,22 +1,34 @@
 /**
  * Ganttist — a Gantt viewer for Todoist.
  *
- * Uses the Todoist REST API v2 (Bearer token, JSON) and Frappe Gantt.
+ * Uses the Todoist REST API v1 (Bearer token, JSON) and Frappe Gantt.
  * No jQuery, no build step, no server needed.
  */
 
 // Where to hit the Todoist REST API from. Two modes:
-//   - "/api/rest/v2"           — same-origin, proxied by our nginx (Docker)
+//   - "/api/v1"                — same-origin, proxied by our nginx (Docker)
 //   - direct api.todoist.com   — browser talks to Todoist directly (CORS)
 //
 // We detect which is available on first API call. Users running the
 // Docker image get the proxy automatically and avoid CORS entirely.
-const DIRECT_API = "https://api.todoist.com/rest/v2";
-const PROXY_API = "/api/rest/v2";
+//
+// Todoist deprecated REST v2 (/rest/v2/) in 2025; all endpoints now live
+// under /api/v1/.
+const DIRECT_API = "https://api.todoist.com/api/v1";
+const PROXY_API = "/api/v1";
 const TOKEN_KEY = "todoist_gantt_token";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let apiBase = null; // resolved lazily on first call
+
+// Todoist API v1 may return either a plain array or { items: [...] }.
+// Normalise both shapes so callers always get an array.
+function normalizeList(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.items)) return data.items;
+  if (data && Array.isArray(data.results)) return data.results;
+  return [];
+}
 
 const els = {
   token: document.getElementById("auth_token"),
@@ -175,7 +187,7 @@ function formatDate(d) {
 async function loadProjects() {
   try {
     setStatus("Loading projects…");
-    const projects = await api("/projects");
+    const projects = normalizeList(await api("/projects"));
 
     // Sort by hierarchy (parents first) then name.
     const byParent = new Map();
@@ -228,7 +240,7 @@ async function loadTasks(projectId) {
       projectId === "__all__"
         ? "/tasks"
         : `/tasks?project_id=${encodeURIComponent(projectId)}`;
-    const tasks = await api(path);
+    const tasks = normalizeList(await api(path));
     currentTasks = tasks;
     renderGantt(tasks);
     setStatus(`Loaded ${tasks.length} tasks.`, "success");
@@ -365,7 +377,7 @@ function renderGantt(tasks) {
               ? `<div class="desc">${escapeHtml(src.description)}</div>`
               : ""
           }
-          ${src.url ? `<div><a href="${src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>` : ""}
+          ${src.app_url || src.url ? `<div><a href="${src.app_url || src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>` : ""}
         </div>`;
     },
   });
@@ -407,7 +419,7 @@ function openDrawer(task) {
   f.due_date.value = (task.due && task.due.date) || "";
   f.priority.value = String(task.priority || 1);
   f.labels.value = (task.labels || []).join(", ");
-  els.drawerOpen.href = task.url || "#";
+  els.drawerOpen.href = task.app_url || task.url || "#";
   els.drawerMeta.innerHTML = drawerMetaHtml(task);
   els.drawer.setAttribute("aria-hidden", "false");
   document.body.classList.add("drawer-open");
