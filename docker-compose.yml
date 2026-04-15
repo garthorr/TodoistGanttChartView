@@ -1,0 +1,21 @@
+services:
+  todoist-gantt:
+    build: .
+    image: todoist-gantt:latest
+    container_name: todoist-gantt
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE

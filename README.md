@@ -35,6 +35,31 @@ python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
+### Running with Docker (self-hosted)
+
+A `Dockerfile` and `docker-compose.yml` are included. The image is a ~25 MB
+`nginx:alpine` serving the static files with gzip, cache headers, and a
+locked-down Content Security Policy.
+
+```bash
+# build + run
+docker compose up -d --build
+
+# then visit http://localhost:8080
+```
+
+Or without compose:
+
+```bash
+docker build -t todoist-gantt .
+docker run -d --name todoist-gantt -p 8080:80 --restart unless-stopped todoist-gantt
+```
+
+To put it behind your own reverse proxy (Caddy, Traefik, nginx), just point
+the proxy at the container on port 80. No environment variables are needed —
+the app runs entirely in the user's browser and never sees their Todoist
+token.
+
 ## Files
 
 - `index.html` — markup
