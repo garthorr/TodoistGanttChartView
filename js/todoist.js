@@ -5,9 +5,18 @@
  * No jQuery, no build step, no server needed.
  */
 
-const API_BASE = "https://api.todoist.com/rest/v2";
+// Where to hit the Todoist REST API from. Two modes:
+//   - "/api/rest/v2"           — same-origin, proxied by our nginx (Docker)
+//   - direct api.todoist.com   — browser talks to Todoist directly (CORS)
+//
+// We detect which is available on first API call. Users running the
+// Docker image get the proxy automatically and avoid CORS entirely.
+const DIRECT_API = "https://api.todoist.com/rest/v2";
+const PROXY_API = "/api/rest/v2";
 const TOKEN_KEY = "todoist_gantt_token";
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+let apiBase = null; // resolved lazily on first call
 
 const els = {
   token: document.getElementById("auth_token"),
@@ -56,10 +65,7 @@ if (savedToken) loadProjects();
 
 // ---------- API ----------
 
-async function api(path, options = {}) {
-  const token = els.token.value.trim();
-  if (!token) throw new Error("Please paste your Todoist API token first.");
-
+function buildHeaders(token, options) {
   const headers = {
     Authorization: `Bearer ${token}`,
     ...(options.headers || {}),
@@ -70,10 +76,63 @@ async function api(path, options = {}) {
       (crypto.randomUUID && crypto.randomUUID()) ||
       `${Date.now()}-${Math.random()}`;
   }
+  return headers;
+}
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+// Decide which API base to use. On file:// we can only go direct.
+// On http(s), probe the proxy first (any response that isn't a 404 or
+// a network error means our nginx is in front).
+async function resolveApiBase(token) {
+  if (apiBase) return apiBase;
+  if (location.protocol === "file:") {
+    apiBase = DIRECT_API;
+    return apiBase;
+  }
+  try {
+    const res = await fetch(`${PROXY_API}/projects`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    // 200 OK, 401/403 (token bad) all prove the proxy is alive.
+    // 404 → no proxy, fall through to direct.
+    if (res.status !== 404) {
+      apiBase = PROXY_API;
+      console.info("[Ganttist] using same-origin API proxy");
+      return apiBase;
+    }
+  } catch (err) {
+    // Network error on /api/ — probably no proxy; fall through.
+    console.info("[Ganttist] no proxy detected, calling api.todoist.com directly");
+  }
+  apiBase = DIRECT_API;
+  return apiBase;
+}
+
+async function api(path, options = {}) {
+  const token = els.token.value.trim();
+  if (!token) throw new Error("Please paste your Todoist API token first.");
+
+  const base = await resolveApiBase(token);
+  const headers = buildHeaders(token, options);
+
+  let res;
+  try {
+    res = await fetch(`${base}${path}`, { ...options, headers });
+  } catch (err) {
+    // TypeError from fetch usually means CORS, DNS, offline, or a bad cert.
+    // The browser does not expose which one to JS, so give actionable advice.
+    const hint =
+      base === DIRECT_API
+        ? " This is often a CORS or network issue — try running the included Docker image (which proxies through nginx)."
+        : "";
+    throw new Error(`Could not reach Todoist (${err.message}).${hint}`);
+  }
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Invalid API token. Double-check it and try again.");
+    throw new Error(
+      "Todoist rejected the API token (HTTP " +
+        res.status +
+        "). Double-check you copied it from Settings → Integrations → Developer."
+    );
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");

@@ -85,6 +85,30 @@ Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the pro
 
 All calls send `Authorization: Bearer <your-token>`.
 
+### Direct vs. proxied calls
+
+Ganttist works in two modes:
+
+| Mode | When | How requests flow |
+| --- | --- | --- |
+| **Proxied** (recommended) | Serving via the included Docker image / `nginx.conf` | Browser → `/api/rest/v2/...` → nginx → `api.todoist.com` (no CORS) |
+| **Direct** (fallback) | Opening `index.html` via `file://` or a static server without the proxy | Browser → `api.todoist.com` (requires Todoist's CORS to cooperate with your browser) |
+
+The app auto-detects which mode is available when you first click **Load projects**. Check the DevTools console — it logs which base it chose.
+
+## Troubleshooting
+
+**"Could not reach Todoist" / "Failed to fetch"** — almost always CORS or a network/DNS issue, not your token. Fixes, in order:
+
+1. **Use the Docker image.** nginx proxies the API calls, so the browser never has to talk to `api.todoist.com` cross-origin. This eliminates CORS entirely.
+2. **Check the DevTools Network tab.** Look for the failed request. If it shows `(failed) CORS error` or `net::ERR_FAILED`, CORS is the issue. If it shows no response at all, check DNS/firewall/VPN.
+3. **Disable browser extensions** that block third-party requests (uBlock Origin, Privacy Badger, DuckDuckGo Privacy, etc.) for this page.
+4. **Don't use `file://`.** Some browsers (Safari especially) block CORS for file origins. Serve the folder via any static server or run the Docker image.
+
+**"Todoist rejected the API token (HTTP 401/403)"** — the token itself is bad or expired. Copy it fresh from **Settings → Integrations → Developer** in Todoist. The field is a password field, so paste carefully (no trailing whitespace).
+
+**Dragging a bar doesn't reschedule / changes snap back** — usually a permissions issue on a shared project, or the API rejected the payload. Check the console for the actual error message.
+
 ## Branding
 
 **Ganttist** is an unaffiliated third-party Todoist client. The wordmark is set in a system serif (Apple's *New York* on macOS/iOS, Georgia elsewhere) paired with a sans-serif UI. The logo and favicon are original marks inspired by the Todoist aesthetic (rounded red square) but redrawn with Gantt-style staggered bars and a subtle vertical gradient so they read as a distinct mark. "Todoist" is a trademark of Doist Ltd.
