@@ -99,6 +99,69 @@
       >
     </footer>
 
+    <aside id="task_drawer" class="drawer" aria-hidden="true" role="dialog" aria-labelledby="drawer_title">
+      <div class="drawer-backdrop" data-close></div>
+      <div class="drawer-panel">
+        <header class="drawer-header">
+          <h2 id="drawer_title">Task</h2>
+          <button type="button" class="drawer-close" data-close aria-label="Close">&times;</button>
+        </header>
+
+        <form id="drawer_form" class="drawer-body">
+          <label class="drawer-field">
+            <span>Title</span>
+            <input type="text" name="content" required />
+          </label>
+
+          <label class="drawer-field">
+            <span>Description</span>
+            <textarea name="description" rows="4" placeholder="Markdown supported"></textarea>
+          </label>
+
+          <div class="drawer-row">
+            <label class="drawer-field">
+              <span>Due date</span>
+              <input type="date" name="due_date" />
+            </label>
+            <label class="drawer-field">
+              <span>Priority</span>
+              <select name="priority">
+                <option value="4">P1 (urgent)</option>
+                <option value="3">P2</option>
+                <option value="2">P3</option>
+                <option value="1">P4 (none)</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="drawer-field">
+            <span>Labels (comma-separated)</span>
+            <input type="text" name="labels" placeholder="work, deep-focus" />
+          </label>
+
+          <div id="drawer_meta" class="drawer-meta"></div>
+
+          <footer class="drawer-actions">
+            <button type="button" class="btn btn-ghost" id="drawer_complete">
+              Mark complete
+            </button>
+            <button type="button" class="btn btn-ghost" id="drawer_popup">
+              Open popup window
+            </button>
+            <a
+              class="btn btn-ghost"
+              id="drawer_open"
+              href="#"
+              target="_blank"
+              rel="noreferrer"
+              >Open in Todoist</a
+            >
+            <button type="submit" class="btn btn-primary">Save</button>
+          </footer>
+        </form>
+      </div>
+    </aside>
+
     <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
     <script src="js/todoist.js"></script>
   </body>

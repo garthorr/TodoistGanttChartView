@@ -18,6 +18,13 @@ const els = {
   status: document.getElementById("status"),
   empty: document.getElementById("empty-state"),
   gantt: document.getElementById("gantt"),
+  drawer: document.getElementById("task_drawer"),
+  drawerTitle: document.getElementById("drawer_title"),
+  drawerForm: document.getElementById("drawer_form"),
+  drawerMeta: document.getElementById("drawer_meta"),
+  drawerComplete: document.getElementById("drawer_complete"),
+  drawerPopup: document.getElementById("drawer_popup"),
+  drawerOpen: document.getElementById("drawer_open"),
 };
 
 let ganttInstance = null;
@@ -275,8 +282,7 @@ function renderGantt(tasks) {
     padding: 18,
     language: "en",
     on_click: (task) => {
-      const src = task._task;
-      if (src && src.url) window.open(src.url, "_blank", "noreferrer");
+      if (task._task) openDrawer(task._task);
     },
     on_date_change: (task, start, end) => {
       updateTaskDueDate(task._task, end);
@@ -323,3 +329,125 @@ async function updateTaskDueDate(task, end) {
     if (currentProjectId) loadTasks(currentProjectId);
   }
 }
+
+// ---------- Task drawer ----------
+//
+// A side panel that opens when a Gantt bar is clicked. Lets the user edit
+// the task in-place (content, description, due date, priority, labels),
+// mark it complete, or open it in a real Todoist popup window. All changes
+// go through REST API v2.
+
+let drawerTask = null;
+
+function openDrawer(task) {
+  drawerTask = task;
+  const f = els.drawerForm.elements;
+  els.drawerTitle.textContent = task.content;
+  f.content.value = task.content;
+  f.description.value = task.description || "";
+  f.due_date.value = (task.due && task.due.date) || "";
+  f.priority.value = String(task.priority || 1);
+  f.labels.value = (task.labels || []).join(", ");
+  els.drawerOpen.href = task.url || "#";
+  els.drawerMeta.innerHTML = drawerMetaHtml(task);
+  els.drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("drawer-open");
+  document.addEventListener("keydown", handleDrawerKey);
+  // Focus the title for quick edits.
+  setTimeout(() => f.content.focus(), 60);
+}
+
+function closeDrawer() {
+  els.drawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("drawer-open");
+  document.removeEventListener("keydown", handleDrawerKey);
+  drawerTask = null;
+}
+
+function handleDrawerKey(e) {
+  if (e.key === "Escape") closeDrawer();
+}
+
+function drawerMetaHtml(task) {
+  const parts = [];
+  if (task.due && task.due.string)
+    parts.push(`Due: <strong>${escapeHtml(task.due.string)}</strong>`);
+  if (task.due && task.due.is_recurring) parts.push("Recurring");
+  if (task.created_at) {
+    const d = new Date(task.created_at);
+    parts.push(`Created ${d.toLocaleDateString()}`);
+  }
+  if (task.comment_count) parts.push(`${task.comment_count} comment(s)`);
+  return parts.join(" • ");
+}
+
+els.drawer.addEventListener("click", (e) => {
+  if (e.target.matches("[data-close]")) closeDrawer();
+});
+
+els.drawerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!drawerTask) return;
+  const f = els.drawerForm.elements;
+  const labels = f.labels.value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const body = {
+    content: f.content.value,
+    description: f.description.value,
+    priority: Number(f.priority.value) || 1,
+    labels,
+  };
+  // Due date: pick date picker value, or clear it if emptied.
+  if (f.due_date.value) {
+    body.due_date = f.due_date.value;
+  } else if (drawerTask.due) {
+    body.due_string = "no date"; // clears the due date in Todoist
+  }
+  try {
+    setStatus(`Saving "${body.content}"…`);
+    const updated = await api(`/tasks/${drawerTask.id}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    // Merge updated task into the in-memory list and re-render.
+    const idx = currentTasks.findIndex((t) => t.id === drawerTask.id);
+    if (idx >= 0 && updated) currentTasks[idx] = updated;
+    renderGantt(currentTasks);
+    setStatus(`Saved "${body.content}".`, "success");
+    closeDrawer();
+  } catch (err) {
+    setStatus(`Failed to save: ${err.message}`, "error");
+  }
+});
+
+els.drawerComplete.addEventListener("click", async () => {
+  if (!drawerTask) return;
+  if (!confirm(`Mark "${drawerTask.content}" as complete?`)) return;
+  try {
+    setStatus("Marking complete…");
+    await api(`/tasks/${drawerTask.id}/close`, { method: "POST" });
+    currentTasks = currentTasks.filter((t) => t.id !== drawerTask.id);
+    renderGantt(currentTasks);
+    setStatus("Task completed.", "success");
+    closeDrawer();
+  } catch (err) {
+    setStatus(`Failed to complete: ${err.message}`, "error");
+  }
+});
+
+els.drawerPopup.addEventListener("click", () => {
+  if (!drawerTask || !drawerTask.url) return;
+  // Open Todoist in a sized popup window. It can't be iframed (Todoist
+  // sends X-Frame-Options: DENY), but a popup feels close to embedded.
+  const w = 480;
+  const h = 720;
+  const left = Math.max(0, window.screenX + window.outerWidth - w - 20);
+  const top = Math.max(0, window.screenY + 80);
+  window.open(
+    drawerTask.url,
+    "todoist-popup",
+    `popup=yes,width=${w},height=${h},left=${left},top=${top}`
+  );
+});
