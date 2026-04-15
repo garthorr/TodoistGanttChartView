@@ -255,7 +255,34 @@ function parseIsoDate(str) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function taskBounds(task) {
+// Todoist tasks don't have a native start date or dependency field, so we
+// let users add them inside the task description using simple conventions:
+//
+//   start: 2026-04-10
+//   deps: 7123456789, 7123456790
+//   depends: 7123456789
+//
+// These lines are picked up here and applied to the Gantt bar.
+function parseDescription(description) {
+  const meta = { start: null, deps: [] };
+  if (!description) return meta;
+  const startMatch = description.match(
+    /(?:^|\n)\s*start\s*:\s*(\d{4}-\d{2}-\d{2})\b/i
+  );
+  if (startMatch) meta.start = startMatch[1];
+  const depsMatch = description.match(
+    /(?:^|\n)\s*(?:deps|depends|depends_on)\s*:\s*([^\n]+)/i
+  );
+  if (depsMatch) {
+    meta.deps = depsMatch[1]
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return meta;
+}
+
+function taskBounds(task, descMeta) {
   const due = task.due;
   let end;
   if (due && due.datetime) {
@@ -268,19 +295,27 @@ function taskBounds(task) {
   if (!end) return null;
 
   let start;
-  if (task.duration) {
+  // 1. Explicit `start: YYYY-MM-DD` in the description wins.
+  if (descMeta && descMeta.start) {
+    const s = parseIsoDate(`${descMeta.start}T00:00:00`);
+    if (s && s < end) start = s;
+  }
+  // 2. Duration field from Todoist.
+  if (!start && task.duration) {
     const minutes =
       task.duration.unit === "day"
         ? task.duration.amount * 24 * 60
         : task.duration.amount;
     start = new Date(end.getTime() - minutes * 60 * 1000);
-  } else {
+  }
+  // 3. Fall back to added_at, capped so ancient tasks don't blow out the scale.
+  if (!start) {
     // API v1 uses added_at; v2 used created_at. Cap the lookback to
-    // 30 days so an ancient creation date doesn't make the chart span
+    // 7 days so an ancient creation date doesn't make the chart span
     // years and push all visible bars to one side.
     const addedAt =
       parseIsoDate(task.added_at) || parseIsoDate(task.created_at);
-    const maxLookback = new Date(end.getTime() - 30 * DAY_MS);
+    const maxLookback = new Date(end.getTime() - 7 * DAY_MS);
     if (addedAt && addedAt > maxLookback && addedAt < end) {
       start = addedAt;
     } else {
@@ -296,7 +331,8 @@ function taskBounds(task) {
 }
 
 function toGanttTask(task, taskMap) {
-  let bounds = taskBounds(task);
+  const descMeta = parseDescription(task.description);
+  let bounds = taskBounds(task, descMeta);
   if (!bounds) {
     // For tasks with no due date: park them on today.
     const today = new Date();
@@ -308,8 +344,17 @@ function toGanttTask(task, taskMap) {
   const recurringClass = task.due && task.due.is_recurring ? " recurring" : "";
   const noDueClass = !task.due ? " no-due" : "";
 
-  const dependencies =
-    task.parent_id && taskMap.has(task.parent_id) ? String(task.parent_id) : "";
+  // Dependencies: combine the implicit parent_id link with any explicit
+  // `deps:` ids from the description. Filter to tasks actually on the chart
+  // so Frappe Gantt doesn't warn about missing nodes.
+  const depIds = new Set();
+  if (task.parent_id && taskMap.has(String(task.parent_id))) {
+    depIds.add(String(task.parent_id));
+  }
+  for (const d of descMeta.deps) {
+    if (taskMap.has(String(d))) depIds.add(String(d));
+  }
+  const dependencies = [...depIds].join(",");
 
   return {
     id: String(task.id),
@@ -348,7 +393,7 @@ function renderGantt(tasks) {
   els.empty.hidden = true;
   els.gantt.innerHTML = "";
 
-  const taskMap = new Map(filtered.map((t) => [t.id, t]));
+  const taskMap = new Map(filtered.map((t) => [String(t.id), t]));
 
   // Sort parents before children, then by due date.
   const sorted = [...filtered].sort((a, b) => {
@@ -368,6 +413,7 @@ function renderGantt(tasks) {
     bar_corner_radius: 4,
     padding: 18,
     language: "en",
+    on_view_change: () => scrollToToday(),
     on_click: (task) => {
       if (task._task) openDrawer(task._task);
     },
@@ -396,6 +442,32 @@ function renderGantt(tasks) {
           ${src.app_url || src.url ? `<div><a href="${src.app_url || src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>` : ""}
         </div>`;
     },
+  });
+
+  // Frappe Gantt renders the full date range from the earliest start to the
+  // latest end, which can span weeks. Today is often near the right edge,
+  // leaving empty past-space on the left. Scroll the wrapper so today sits
+  // near the left, giving the user a "now and what's coming" view.
+  scrollToToday();
+}
+
+function scrollToToday() {
+  // Wait one frame so Frappe Gantt has painted .today-highlight.
+  requestAnimationFrame(() => {
+    const wrapper = els.gantt.closest(".gantt-wrapper");
+    if (!wrapper) return;
+    const today = els.gantt.querySelector(".today-highlight");
+    let targetX;
+    if (today) {
+      // today-highlight is a <rect>; use its x attribute.
+      targetX = parseFloat(today.getAttribute("x")) || 0;
+    } else {
+      // Fallback: scroll roughly 2 days in from the left edge of the chart.
+      targetX = 0;
+    }
+    // Position today ~80px from the left edge of the viewport so a little
+    // past context is still visible, but upcoming work dominates the view.
+    wrapper.scrollLeft = Math.max(0, targetX - 80);
   });
 }
 
@@ -460,11 +532,16 @@ function drawerMetaHtml(task) {
   if (task.due && task.due.string)
     parts.push(`Due: <strong>${escapeHtml(task.due.string)}</strong>`);
   if (task.due && task.due.is_recurring) parts.push("Recurring");
-  if (task.created_at) {
-    const d = new Date(task.created_at);
-    parts.push(`Created ${d.toLocaleDateString()}`);
+  const added = task.added_at || task.created_at;
+  if (added) {
+    const d = new Date(added);
+    if (!isNaN(d.getTime())) parts.push(`Created ${d.toLocaleDateString()}`);
   }
   if (task.comment_count) parts.push(`${task.comment_count} comment(s)`);
+  // Task ID — useful when authoring `deps: <id>` in another task's description.
+  parts.push(
+    `ID: <code style="user-select:all">${escapeHtml(String(task.id))}</code>`
+  );
   return parts.join(" • ");
 }
 
@@ -525,7 +602,9 @@ els.drawerComplete.addEventListener("click", async () => {
 });
 
 els.drawerPopup.addEventListener("click", () => {
-  if (!drawerTask || !drawerTask.url) return;
+  if (!drawerTask) return;
+  const url = drawerTask.app_url || drawerTask.url;
+  if (!url) return;
   // Open Todoist in a sized popup window. It can't be iframed (Todoist
   // sends X-Frame-Options: DENY), but a popup feels close to embedded.
   const w = 480;
@@ -533,7 +612,7 @@ els.drawerPopup.addEventListener("click", () => {
   const left = Math.max(0, window.screenX + window.outerWidth - w - 20);
   const top = Math.max(0, window.screenY + 80);
   window.open(
-    drawerTask.url,
+    url,
     "todoist-popup",
     `popup=yes,width=${w},height=${h},left=${left},top=${top}`
   );

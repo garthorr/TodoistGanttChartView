@@ -214,7 +214,9 @@ body {
   box-shadow: var(--shadow);
   padding: 16px;
   min-height: 200px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 75vh;
 }
 
 .empty {
@@ -223,8 +225,13 @@ body {
   color: var(--muted);
 }
 
+/* Do NOT force #gantt to width: 100%.
+   Frappe Gantt renders an SVG whose natural width spans the full task range
+   (often thousands of pixels). Forcing 100% squashes it and hides the
+   horizontal scroll. Let the SVG keep its intrinsic size and let
+   .gantt-wrapper scroll. */
 #gantt {
-  width: 100%;
+  display: block;
 }
 
 .legend {

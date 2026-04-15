@@ -24,6 +24,8 @@ No backend, no build step, no tracking. Open `index.html` (or run the Docker ima
 - **Mark complete** from the drawer (`POST /tasks/{id}/close`)
 - **Open popup window** button — pops out the real Todoist task page in a sized floating window (Todoist forbids iframe embedding, so a popup is the closest "embedded" experience)
 - Bars colored by **priority** (P1–P4); recurring tasks are striped
+- **Start dates & dependencies via task description** — Todoist has no native start-date or depends-on field, so Ganttist parses simple conventions (see below)
+- **Auto-scrolls to today** so upcoming work dominates the view
 - Project picker with hierarchy and an **"All projects"** view
 - View modes: Quarter Day / Half Day / Day / Week / Month
 - Optionally include tasks **without a due date**
@@ -75,6 +77,28 @@ Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the pro
 - `images/logo.svg`, `images/favicon.svg` — custom mark (Gantt-bars in a rounded red square, derivative rather than a copy of the Todoist logo)
 - `Dockerfile`, `nginx.conf`, `docker-compose.yml` — self-hosting
 - Frappe Gantt is loaded from jsDelivr
+
+## Start dates & dependencies
+
+Todoist tasks only have a due date, not a start date or a dependency field. Rather than invent a separate metadata store, Ganttist reads a couple of simple conventions from the task description:
+
+```
+start: 2026-04-10
+deps: 7123456789, 7123456790
+```
+
+- `start: YYYY-MM-DD` — pins the bar's left edge. Without it, Ganttist falls back to the task's duration field, then to its creation date (capped at 7 days back), then to a 3-day default bar.
+- `deps:` (also accepts `depends:` or `depends_on:`) — comma-or-space-separated list of Todoist task IDs that must finish first. Drawn as arrows between bars. You can grab a task's ID from the drawer's meta line, or from the end of its Todoist URL.
+
+Lines are matched case-insensitively and can appear anywhere in the description. Everything else in the description is left alone.
+
+Parent/subtask relationships are picked up automatically — a subtask always depends on its parent, even without a `deps:` line.
+
+## Known limitations / TODO
+
+- **Verify round-trip writes end-to-end.** Drag-to-reschedule, drawer saves, and mark-complete all POST to the Todoist API, but I haven't yet spot-checked that the changes actually land on every Todoist surface (web, mobile, shared projects). On the list.
+- Frappe Gantt doesn't support cyclic dependencies; it'll just render odd arrows. Don't make a `deps:` cycle.
+- There's no true zoom-to-fit yet — the view mode selector is the zoom control.
 
 ## Todoist API notes
 
