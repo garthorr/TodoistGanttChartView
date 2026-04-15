@@ -280,31 +280,35 @@ body {
   text-decoration: none;
 }
 
-/* --- Frappe Gantt bar colors by priority --- */
-.gantt .bar-wrapper.priority-p1 .bar {
-  fill: var(--p1);
-}
-.gantt .bar-wrapper.priority-p2 .bar {
-  fill: var(--p2);
-}
-.gantt .bar-wrapper.priority-p3 .bar {
-  fill: var(--p3);
-}
-.gantt .bar-wrapper.priority-p4 .bar {
-  fill: var(--p4);
-}
+/* --- Frappe Gantt bar colors by priority ---
+   Use hardcoded hex + !important so these reliably beat Frappe Gantt's
+   own .gantt .bar-group .bar rule regardless of cascade order or whether
+   CSS custom-properties resolve inside an SVG rendering context. */
+.gantt .bar-wrapper.priority-p1 .bar,
+.gantt .bar-wrapper.priority-p1 .bar-progress { fill: #db4c3f !important; }
+
+.gantt .bar-wrapper.priority-p2 .bar,
+.gantt .bar-wrapper.priority-p2 .bar-progress { fill: #eb8909 !important; }
+
+.gantt .bar-wrapper.priority-p3 .bar,
+.gantt .bar-wrapper.priority-p3 .bar-progress { fill: #246fe0 !important; }
+
+.gantt .bar-wrapper.priority-p4 .bar,
+.gantt .bar-wrapper.priority-p4 .bar-progress { fill: #9e9e9e !important; }
+
 .gantt .bar-wrapper.recurring .bar {
-  stroke: #fff;
-  stroke-width: 1px;
-  stroke-dasharray: 4 3;
+  stroke: rgba(255,255,255,0.6) !important;
+  stroke-width: 1.5px !important;
+  stroke-dasharray: 5 3 !important;
 }
 .gantt .bar-wrapper.no-due .bar {
-  opacity: 0.55;
+  opacity: 0.45;
 }
-.gantt .bar-label,
+
+/* White labels on all coloured bars */
 .gantt .bar-wrapper .bar-label {
-  fill: #fff;
-  font-weight: 500;
+  fill: #ffffff !important;
+  font-weight: 500 !important;
 }
 
 .gantt-popup {

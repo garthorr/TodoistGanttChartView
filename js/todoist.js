@@ -13,7 +13,7 @@
 // Docker image get the proxy automatically and avoid CORS entirely.
 //
 // Todoist deprecated REST v2 (/rest/v2/) in 2025; all endpoints now live
-// under /api/v1/.
+// under /api/v1/. Field renamed: created_at → added_at.
 const DIRECT_API = "https://api.todoist.com/api/v1";
 const PROXY_API = "/api/v1";
 const TOKEN_KEY = "todoist_gantt_token";
@@ -249,16 +249,23 @@ async function loadTasks(projectId) {
   }
 }
 
+function parseIsoDate(str) {
+  if (!str) return null;
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function taskBounds(task) {
   const due = task.due;
   let end;
   if (due && due.datetime) {
-    end = new Date(due.datetime);
+    end = parseIsoDate(due.datetime);
   } else if (due && due.date) {
-    end = new Date(`${due.date}T23:59:59`);
-  } else {
-    return null; // no due date
+    // due.date is always YYYY-MM-DD in v1. Append end-of-day so the bar
+    // reaches the full due day in local time.
+    end = parseIsoDate(`${due.date}T23:59:59`);
   }
+  if (!end) return null;
 
   let start;
   if (task.duration) {
@@ -267,14 +274,23 @@ function taskBounds(task) {
         ? task.duration.amount * 24 * 60
         : task.duration.amount;
     start = new Date(end.getTime() - minutes * 60 * 1000);
-  } else if (task.created_at) {
-    start = new Date(task.created_at);
   } else {
-    start = new Date(end.getTime() - DAY_MS);
+    // API v1 uses added_at; v2 used created_at. Cap the lookback to
+    // 30 days so an ancient creation date doesn't make the chart span
+    // years and push all visible bars to one side.
+    const addedAt =
+      parseIsoDate(task.added_at) || parseIsoDate(task.created_at);
+    const maxLookback = new Date(end.getTime() - 30 * DAY_MS);
+    if (addedAt && addedAt > maxLookback && addedAt < end) {
+      start = addedAt;
+    } else {
+      // Default: show task as a 3-day bar ending on the due date so
+      // bars are wide enough to read in any view mode.
+      start = new Date(end.getTime() - 3 * DAY_MS);
+    }
   }
 
   if (start >= end) start = new Date(end.getTime() - DAY_MS);
-  // Frappe Gantt needs at least 1 day visible.
   if (end - start < DAY_MS) start = new Date(end.getTime() - DAY_MS);
   return { start, end };
 }
