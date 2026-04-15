@@ -6,5 +6,6 @@ Dockerfile
 docker-compose.yml
 README.md
 LICENSE
-images/
 *.md
+# Screenshot is only used by the README — logo/favicon are needed at runtime.
+images/screenshot.png

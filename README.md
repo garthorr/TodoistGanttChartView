@@ -1,34 +1,46 @@
-# Todoist Gantt Chart View
+<p align="center">
+  <img src="images/logo.svg" alt="Todoist Gantt Chart" width="96" height="96" />
+</p>
 
-A lightweight, static web app that renders your [Todoist](https://todoist.com/) projects as a Gantt chart — powered by the current Todoist REST API v2 and [Frappe Gantt](https://frappe.io/gantt).
+<h1 align="center">Todoist Gantt Chart View</h1>
 
-No backend, no build step, no tracking. Open `index.html` and go.
+<p align="center">
+  A lightweight, self-hostable web app that renders your
+  <a href="https://todoist.com/">Todoist</a> projects as an interactive Gantt
+  chart. Powered by the current Todoist REST API v2 and
+  <a href="https://frappe.io/gantt">Frappe Gantt</a>.
+</p>
+
+No backend, no build step, no tracking. Open `index.html` (or run the Docker image) and go.
 
 ![Screenshot](images/screenshot.png)
 
 ## Features
 
-- Works with the **current Todoist REST API v2** (Bearer token auth)
-- Reads native **due dates, datetimes, durations, and recurrence** — no more `(YYYY-MM-DD)` hack in task names
-- **Drag a bar** to reschedule a task (writes back to Todoist)
-- **Click a bar** to open the task in Todoist
-- Bars colored by **priority** (P1–P4), recurring tasks are striped
+- Current **Todoist REST API v2** (Bearer token auth) — no more dead v1 endpoints
+- Reads native **due dates, datetimes, durations, and recurrence** (no more stuffing `(YYYY-MM-DD)` into task names)
+- **Drag a bar** to reschedule a task — writes back to Todoist
+- **Click a bar** to open an **in-app side drawer** that edits the task inline (title, description, due date, priority, labels)
+- **Mark complete** from the drawer (`POST /tasks/{id}/close`)
+- **Open popup window** button — pops out the real Todoist task page in a sized floating window (Todoist forbids iframe embedding, so a popup is the closest "embedded" experience)
+- Bars colored by **priority** (P1–P4); recurring tasks are striped
 - Project picker with hierarchy and an **"All projects"** view
 - View modes: Quarter Day / Half Day / Day / Week / Month
 - Optionally include tasks **without a due date**
 - Token is stored only in your browser's `localStorage`
-- Dark-mode aware (respects `prefers-color-scheme`)
+- **Dark-mode aware** (respects `prefers-color-scheme`)
+- Custom logo + SVG favicon
 
 ## Usage
 
 1. Open [`index.html`](index.html) in a browser (or serve the folder with any static server).
 2. Grab a personal API token from Todoist: **Settings → Integrations → Developer**.
 3. Paste it, click **Load projects**, pick a project.
-4. Drag bars to reschedule, click to open the task in Todoist.
+4. Drag bars to reschedule, click a bar to edit in the drawer, or pop it out into a Todoist window.
 
 ### Running locally
 
-Because we hit the Todoist API from the browser, just opening the file via `file://` works in most browsers. If your browser blocks CORS for local files, serve the folder:
+Because all calls happen in the browser, opening the file via `file://` works in most browsers. If your browser blocks CORS for local files, serve the folder:
 
 ```bash
 python3 -m http.server 8000
@@ -37,9 +49,7 @@ python3 -m http.server 8000
 
 ### Running with Docker (self-hosted)
 
-A `Dockerfile` and `docker-compose.yml` are included. The image is a ~25 MB
-`nginx:alpine` serving the static files with gzip, cache headers, and a
-locked-down Content Security Policy.
+A `Dockerfile` and `docker-compose.yml` are included. The image is a ~25 MB `nginx:alpine` serving the static files with gzip, cache headers, and a locked-down Content Security Policy.
 
 ```bash
 # build + run
@@ -55,26 +65,29 @@ docker build -t todoist-gantt .
 docker run -d --name todoist-gantt -p 8080:80 --restart unless-stopped todoist-gantt
 ```
 
-To put it behind your own reverse proxy (Caddy, Traefik, nginx), just point
-the proxy at the container on port 80. No environment variables are needed —
-the app runs entirely in the user's browser and never sees their Todoist
-token.
+Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the proxy at the container on port 80. No environment variables are needed — the app runs entirely in the user's browser and never sees the Todoist token.
 
 ## Files
 
 - `index.html` — markup
-- `js/todoist.js` — the whole app (vanilla ES, ~250 lines)
-- `css/style.css` — styling
-
-Frappe Gantt is loaded from jsDelivr.
+- `js/todoist.js` — the whole app (vanilla ES, ~450 lines)
+- `css/style.css` — styling, dark-mode aware
+- `images/logo.svg`, `images/favicon.svg` — custom mark (Gantt-bars in a rounded red square, derivative rather than a copy of the Todoist logo)
+- `Dockerfile`, `nginx.conf`, `docker-compose.yml` — self-hosting
+- Frappe Gantt is loaded from jsDelivr
 
 ## Todoist API notes
 
 - Projects: `GET https://api.todoist.com/rest/v2/projects`
 - Tasks: `GET https://api.todoist.com/rest/v2/tasks?project_id=…`
-- Reschedule: `POST https://api.todoist.com/rest/v2/tasks/{id}` with `{ "due_date": "YYYY-MM-DD" }`
+- Update: `POST https://api.todoist.com/rest/v2/tasks/{id}` with e.g. `{ "due_date": "YYYY-MM-DD" }`
+- Complete: `POST https://api.todoist.com/rest/v2/tasks/{id}/close`
 
 All calls send `Authorization: Bearer <your-token>`.
+
+## Branding
+
+The logo and favicon are an original mark inspired by the Todoist aesthetic (rounded red square) but redrawn with Gantt-style staggered bars and a subtle vertical gradient to distinguish it from the official Todoist logo. "Todoist" is a trademark of Doist Ltd.; this project is an unaffiliated third-party client.
 
 ## License
 
