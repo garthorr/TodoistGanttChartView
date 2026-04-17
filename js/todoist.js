@@ -17,6 +17,9 @@
 const DIRECT_API = "https://api.todoist.com/api/v1";
 const PROXY_API = "/api/v1";
 const TOKEN_KEY = "todoist_gantt_token";
+const PROJECT_KEY = "todoist_gantt_project";
+const VIEW_KEY = "todoist_gantt_view";
+const NODUE_KEY = "todoist_gantt_nodue";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let apiBase = null; // resolved lazily on first call
@@ -51,11 +54,19 @@ const els = {
 let ganttInstance = null;
 let currentTasks = [];
 let currentProjectId = "";
+// Module-level lookup used by on_click — Frappe Gantt may not preserve
+// custom properties on the task objects it passes to callbacks.
+let currentTaskMap = new Map();
 
 // ---------- init ----------
 
 const savedToken = localStorage.getItem(TOKEN_KEY);
 if (savedToken) els.token.value = savedToken;
+
+// Restore view controls from last session.
+const savedView = localStorage.getItem(VIEW_KEY);
+if (savedView) els.viewMode.value = savedView;
+if (localStorage.getItem(NODUE_KEY) === "1") els.includeNoDue.checked = true;
 
 els.token.addEventListener("change", () =>
   localStorage.setItem(TOKEN_KEY, els.token.value.trim())
@@ -63,17 +74,22 @@ els.token.addEventListener("change", () =>
 els.loadProjects.addEventListener("click", loadProjects);
 els.projects.addEventListener("change", () => {
   currentProjectId = els.projects.value;
+  localStorage.setItem(PROJECT_KEY, currentProjectId);
   loadTasks(currentProjectId);
 });
 els.viewMode.addEventListener("change", () => {
+  localStorage.setItem(VIEW_KEY, els.viewMode.value);
   if (ganttInstance) ganttInstance.change_view_mode(els.viewMode.value);
 });
 els.includeNoDue.addEventListener("change", () => {
+  localStorage.setItem(NODUE_KEY, els.includeNoDue.checked ? "1" : "0");
   if (currentTasks.length) renderGantt(currentTasks);
 });
 
 // Auto-load projects on page load if token already saved.
-if (savedToken) loadProjects();
+// Pass the previously-selected project so it can be restored after the
+// project list is populated.
+if (savedToken) loadProjects(localStorage.getItem(PROJECT_KEY));
 
 // ---------- API ----------
 
@@ -184,7 +200,7 @@ function formatDate(d) {
 
 // ---------- Projects ----------
 
-async function loadProjects() {
+async function loadProjects(restoreProjectId = null) {
   try {
     setStatus("Loading projects…");
     const projects = normalizeList(await api("/projects"));
@@ -221,6 +237,13 @@ async function loadProjects() {
 
     localStorage.setItem(TOKEN_KEY, els.token.value.trim());
     setStatus(`Loaded ${projects.length} projects.`, "success");
+
+    // Restore the previously-selected project (if it's in the list).
+    if (restoreProjectId && els.projects.querySelector(`option[value="${CSS.escape(restoreProjectId)}"]`)) {
+      els.projects.value = restoreProjectId;
+      currentProjectId = restoreProjectId;
+      loadTasks(restoreProjectId);
+    }
   } catch (err) {
     setStatus(err.message, "error");
   }
@@ -393,7 +416,8 @@ function renderGantt(tasks) {
   els.empty.hidden = true;
   els.gantt.innerHTML = "";
 
-  const taskMap = new Map(filtered.map((t) => [String(t.id), t]));
+  currentTaskMap = new Map(filtered.map((t) => [String(t.id), t]));
+  const taskMap = currentTaskMap;
 
   // Sort parents before children, then by due date.
   const sorted = [...filtered].sort((a, b) => {
@@ -415,13 +439,17 @@ function renderGantt(tasks) {
     language: "en",
     on_view_change: () => scrollToToday(),
     on_click: (task) => {
-      if (task._task) openDrawer(task._task);
+      // Look up the raw Todoist task by ID — Frappe Gantt may not preserve
+      // custom properties like _task on the objects it passes to callbacks.
+      const raw = currentTaskMap.get(String(task.id));
+      if (raw) openDrawer(raw);
     },
     on_date_change: (task, start, end) => {
-      updateTaskDueDate(task._task, end);
+      const raw = currentTaskMap.get(String(task.id));
+      if (raw) updateTaskDueDate(raw, end);
     },
     custom_popup_html: (task) => {
-      const src = task._task || {};
+      const src = currentTaskMap.get(String(task.id)) || {};
       const pr = src.priority || 1;
       const labels = (src.labels || []).join(", ") || "—";
       const due =
