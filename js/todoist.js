@@ -480,7 +480,10 @@ async function updateTaskDueDate(task, end) {
       body: JSON.stringify({ due_date }),
     });
     // Update in-memory task so further drags use the new date.
-    task.due = { ...(task.due || {}), date: due_date, is_recurring: false };
+    // Note: for recurring tasks, Todoist keeps the recurrence rule and will
+    // recalculate the next occurrence. Setting due_date shifts only the
+    // current occurrence; the task will reappear as recurring on reload.
+    task.due = { ...(task.due || {}), date: due_date };
     setStatus(`Rescheduled "${task.content}" to ${due_date}.`, "success");
   } catch (err) {
     setStatus(`Failed to reschedule: ${err.message}`, "error");
@@ -494,7 +497,7 @@ async function updateTaskDueDate(task, end) {
 // A side panel that opens when a Gantt bar is clicked. Lets the user edit
 // the task in-place (content, description, due date, priority, labels),
 // mark it complete, or open it in a real Todoist popup window. All changes
-// go through REST API v2.
+// go through REST API v1.
 
 let drawerTask = null;
 
