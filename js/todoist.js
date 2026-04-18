@@ -5,27 +5,17 @@
  * No jQuery, no build step, no server needed.
  */
 
-// Where to hit the Todoist REST API from. Two modes:
-//   - "/api/v1"                — same-origin, proxied by our nginx (Docker)
-//   - direct api.todoist.com   — browser talks to Todoist directly (CORS)
-//
-// We detect which is available on first API call. Users running the
-// Docker image get the proxy automatically and avoid CORS entirely.
-//
-// Todoist deprecated REST v2 (/rest/v2/) in 2025; all endpoints now live
-// under /api/v1/. Field renamed: created_at → added_at.
 const DIRECT_API = "https://api.todoist.com/api/v1";
 const PROXY_API = "/api/v1";
 const TOKEN_KEY = "todoist_gantt_token";
-const PROJECT_KEY = "todoist_gantt_project";
+const PROJECTS_KEY = "todoist_gantt_projects";
 const VIEW_KEY = "todoist_gantt_view";
 const NODUE_KEY = "todoist_gantt_nodue";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-let apiBase = null; // resolved lazily on first call
+let apiBase = null;
 
 // Todoist API v1 may return either a plain array or { items: [...] }.
-// Normalise both shapes so callers always get an array.
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
@@ -37,8 +27,11 @@ const els = {
   token: document.getElementById("auth_token"),
   loadProjects: document.getElementById("load_projects"),
   projects: document.getElementById("projects"),
+  addProject: document.getElementById("add_project"),
+  projectChips: document.getElementById("project_chips"),
   viewMode: document.getElementById("view_mode"),
   includeNoDue: document.getElementById("include_nodue"),
+  linkTasks: document.getElementById("link_tasks"),
   status: document.getElementById("status"),
   empty: document.getElementById("empty-state"),
   gantt: document.getElementById("gantt"),
@@ -53,43 +46,72 @@ const els = {
 
 let ganttInstance = null;
 let currentTasks = [];
-let currentProjectId = "";
-// Module-level lookup used by on_click — Frappe Gantt may not preserve
-// custom properties on the task objects it passes to callbacks.
+// Module-level lookup by String(id) — Frappe Gantt may not preserve custom
+// properties on task objects it passes to callbacks.
 let currentTaskMap = new Map();
+// Active projects shown on the chart: [{ id, name }, ...]
+let activeProjects = [];
+// Link mode: null = off, {} = waiting for source, { sourceId, sourceName } = waiting for target.
+let linkState = null;
 
 // ---------- init ----------
 
 const savedToken = localStorage.getItem(TOKEN_KEY);
 if (savedToken) els.token.value = savedToken;
 
-// Restore view controls from last session.
 const savedView = localStorage.getItem(VIEW_KEY);
 if (savedView) els.viewMode.value = savedView;
 if (localStorage.getItem(NODUE_KEY) === "1") els.includeNoDue.checked = true;
 
+try {
+  activeProjects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]");
+} catch (_) {
+  activeProjects = [];
+}
+
 els.token.addEventListener("change", () =>
   localStorage.setItem(TOKEN_KEY, els.token.value.trim())
 );
+
 els.loadProjects.addEventListener("click", loadProjects);
-els.projects.addEventListener("change", () => {
-  currentProjectId = els.projects.value;
-  localStorage.setItem(PROJECT_KEY, currentProjectId);
-  loadTasks(currentProjectId);
+
+els.addProject.addEventListener("click", () => {
+  const id = els.projects.value;
+  const option = els.projects.querySelector(`option[value="${CSS.escape(id)}"]`);
+  if (!id || !option || activeProjects.some((p) => p.id === id)) return;
+  addProjectToChart(id, option.textContent.trim());
 });
+
+// Enter key in the dropdown acts as "Add".
+els.projects.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.addProject.click();
+});
+
 els.viewMode.addEventListener("change", () => {
   localStorage.setItem(VIEW_KEY, els.viewMode.value);
   if (ganttInstance) ganttInstance.change_view_mode(els.viewMode.value);
 });
+
 els.includeNoDue.addEventListener("change", () => {
   localStorage.setItem(NODUE_KEY, els.includeNoDue.checked ? "1" : "0");
   if (currentTasks.length) renderGantt(currentTasks);
 });
 
+els.linkTasks.addEventListener("click", () => {
+  if (linkState !== null) {
+    exitLinkMode();
+  } else {
+    enterLinkMode();
+  }
+});
+
+// Escape cancels link mode (and the drawer key handler covers the drawer).
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && linkState !== null) exitLinkMode();
+});
+
 // Auto-load projects on page load if token already saved.
-// Pass the previously-selected project so it can be restored after the
-// project list is populated.
-if (savedToken) loadProjects(localStorage.getItem(PROJECT_KEY));
+if (savedToken) loadProjects();
 
 // ---------- API ----------
 
@@ -107,9 +129,6 @@ function buildHeaders(token, options) {
   return headers;
 }
 
-// Decide which API base to use. On file:// we can only go direct.
-// On http(s), probe the proxy first (any response that isn't a 404 or
-// a network error means our nginx is in front).
 async function resolveApiBase(token) {
   if (apiBase) return apiBase;
   if (location.protocol === "file:") {
@@ -121,15 +140,12 @@ async function resolveApiBase(token) {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
-    // 200 OK, 401/403 (token bad) all prove the proxy is alive.
-    // 404 → no proxy, fall through to direct.
     if (res.status !== 404) {
       apiBase = PROXY_API;
       console.info("[Ganttist] using same-origin API proxy");
       return apiBase;
     }
   } catch (err) {
-    // Network error on /api/ — probably no proxy; fall through.
     console.info("[Ganttist] no proxy detected, calling api.todoist.com directly");
   }
   apiBase = DIRECT_API;
@@ -147,8 +163,6 @@ async function api(path, options = {}) {
   try {
     res = await fetch(`${base}${path}`, { ...options, headers });
   } catch (err) {
-    // TypeError from fetch usually means CORS, DNS, offline, or a bad cert.
-    // The browser does not expose which one to JS, so give actionable advice.
     const hint =
       base === DIRECT_API
         ? " This is often a CORS or network issue — try running the included Docker image (which proxies through nginx)."
@@ -181,13 +195,7 @@ function escapeHtml(s) {
   return String(s).replace(
     /[&<>"']/g,
     (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      }[c])
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
 }
 
@@ -200,12 +208,11 @@ function formatDate(d) {
 
 // ---------- Projects ----------
 
-async function loadProjects(restoreProjectId = null) {
+async function loadProjects() {
   try {
     setStatus("Loading projects…");
     const projects = normalizeList(await api("/projects"));
 
-    // Sort by hierarchy (parents first) then name.
     const byParent = new Map();
     for (const p of projects) {
       const key = p.parent_id || "root";
@@ -224,49 +231,105 @@ async function loadProjects(restoreProjectId = null) {
     walk(null, 0);
 
     els.projects.innerHTML =
-      '<option value="">— Choose a project —</option>' +
-      '<option value="__all__">All projects</option>' +
+      '<option value="">— Add a project —</option>' +
       sorted
         .map(
           (p) =>
-            `<option value="${p.id}">${"  ".repeat(p.depth)}${escapeHtml(
-              p.name
-            )}</option>`
+            `<option value="${p.id}">${"  ".repeat(p.depth)}${escapeHtml(p.name)}</option>`
         )
         .join("");
 
     localStorage.setItem(TOKEN_KEY, els.token.value.trim());
     setStatus(`Loaded ${projects.length} projects.`, "success");
 
-    // Restore the previously-selected project (if it's in the list).
-    if (restoreProjectId && els.projects.querySelector(`option[value="${CSS.escape(restoreProjectId)}"]`)) {
-      els.projects.value = restoreProjectId;
-      currentProjectId = restoreProjectId;
-      loadTasks(restoreProjectId);
-    }
+    // Restore persisted active projects. Prune any that were deleted.
+    const nameById = new Map(projects.map((p) => [String(p.id), p.name]));
+    activeProjects = activeProjects.filter((p) => nameById.has(p.id));
+    saveActiveProjects();
+    renderChips(nameById);
+    if (activeProjects.length) loadAllTasks();
   } catch (err) {
     setStatus(err.message, "error");
   }
 }
 
+// ---------- Multi-project chips ----------
+
+function saveActiveProjects() {
+  localStorage.setItem(PROJECTS_KEY, JSON.stringify(activeProjects));
+}
+
+function renderChips(nameById) {
+  els.projectChips.innerHTML = "";
+  for (const { id, name } of activeProjects) {
+    addChipDOM(id, nameById ? (nameById.get(id) || name) : name);
+  }
+}
+
+function addChipDOM(id, name) {
+  const chip = document.createElement("span");
+  chip.className = "chip";
+  chip.dataset.id = id;
+  chip.innerHTML =
+    `${escapeHtml(name)}` +
+    `<button class="chip-remove" aria-label="Remove ${escapeHtml(name)}" data-id="${escapeHtml(id)}">&times;</button>`;
+  els.projectChips.appendChild(chip);
+}
+
+function addProjectToChart(id, name) {
+  if (activeProjects.some((p) => p.id === id)) return;
+  activeProjects.push({ id, name });
+  saveActiveProjects();
+  addChipDOM(id, name);
+  loadAllTasks();
+}
+
+function removeProjectFromChart(id) {
+  activeProjects = activeProjects.filter((p) => p.id !== id);
+  saveActiveProjects();
+  const chip = els.projectChips.querySelector(`.chip[data-id="${CSS.escape(id)}"]`);
+  if (chip) chip.remove();
+  loadAllTasks();
+}
+
+els.projectChips.addEventListener("click", (e) => {
+  const btn = e.target.closest(".chip-remove");
+  if (btn) removeProjectFromChart(btn.dataset.id);
+});
+
 // ---------- Tasks ----------
 
-async function loadTasks(projectId) {
-  if (!projectId) {
+async function loadAllTasks() {
+  if (!activeProjects.length) {
     currentTasks = [];
     clearGantt();
     return;
   }
   try {
     setStatus("Loading tasks…");
-    const path =
-      projectId === "__all__"
-        ? "/tasks"
-        : `/tasks?project_id=${encodeURIComponent(projectId)}`;
-    const tasks = normalizeList(await api(path));
-    currentTasks = tasks;
-    renderGantt(tasks);
-    setStatus(`Loaded ${tasks.length} tasks.`, "success");
+    const batches = await Promise.all(
+      activeProjects.map(({ id }) =>
+        api(`/tasks?project_id=${encodeURIComponent(id)}`).then(normalizeList)
+      )
+    );
+    // Merge and deduplicate by task id.
+    const seen = new Set();
+    const merged = [];
+    for (const batch of batches) {
+      for (const task of batch) {
+        if (!seen.has(task.id)) {
+          seen.add(task.id);
+          merged.push(task);
+        }
+      }
+    }
+    currentTasks = merged;
+    renderGantt(currentTasks);
+    const projectWord = activeProjects.length === 1 ? "project" : "projects";
+    setStatus(
+      `Loaded ${merged.length} tasks from ${activeProjects.length} ${projectWord}.`,
+      "success"
+    );
   } catch (err) {
     setStatus(err.message, "error");
   }
@@ -283,7 +346,6 @@ function parseIsoDate(str) {
 //
 //   start: 2026-04-10
 //   deps: 7123456789, 7123456790
-//   depends: 7123456789
 //
 // These lines are picked up here and applied to the Gantt bar.
 function parseDescription(description) {
@@ -311,19 +373,17 @@ function taskBounds(task, descMeta) {
   if (due && due.datetime) {
     end = parseIsoDate(due.datetime);
   } else if (due && due.date) {
-    // due.date is always YYYY-MM-DD in v1. Append end-of-day so the bar
-    // reaches the full due day in local time.
     end = parseIsoDate(`${due.date}T23:59:59`);
   }
   if (!end) return null;
 
   let start;
-  // 1. Explicit `start: YYYY-MM-DD` in the description wins.
+  // 1. Explicit start: date in description wins.
   if (descMeta && descMeta.start) {
     const s = parseIsoDate(`${descMeta.start}T00:00:00`);
     if (s && s < end) start = s;
   }
-  // 2. Duration field from Todoist.
+  // 2. Todoist duration field.
   if (!start && task.duration) {
     const minutes =
       task.duration.unit === "day"
@@ -331,19 +391,14 @@ function taskBounds(task, descMeta) {
         : task.duration.amount;
     start = new Date(end.getTime() - minutes * 60 * 1000);
   }
-  // 3. Fall back to added_at, capped so ancient tasks don't blow out the scale.
+  // 3. added_at capped to 7 days, then a 3-day default bar.
   if (!start) {
-    // API v1 uses added_at; v2 used created_at. Cap the lookback to
-    // 7 days so an ancient creation date doesn't make the chart span
-    // years and push all visible bars to one side.
     const addedAt =
       parseIsoDate(task.added_at) || parseIsoDate(task.created_at);
     const maxLookback = new Date(end.getTime() - 7 * DAY_MS);
     if (addedAt && addedAt > maxLookback && addedAt < end) {
       start = addedAt;
     } else {
-      // Default: show task as a 3-day bar ending on the due date so
-      // bars are wide enough to read in any view mode.
       start = new Date(end.getTime() - 3 * DAY_MS);
     }
   }
@@ -357,7 +412,6 @@ function toGanttTask(task, taskMap) {
   const descMeta = parseDescription(task.description);
   let bounds = taskBounds(task, descMeta);
   if (!bounds) {
-    // For tasks with no due date: park them on today.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     bounds = { start: today, end: new Date(today.getTime() + DAY_MS) };
@@ -367,9 +421,6 @@ function toGanttTask(task, taskMap) {
   const recurringClass = task.due && task.due.is_recurring ? " recurring" : "";
   const noDueClass = !task.due ? " no-due" : "";
 
-  // Dependencies: combine the implicit parent_id link with any explicit
-  // `deps:` ids from the description. Filter to tasks actually on the chart
-  // so Frappe Gantt doesn't warn about missing nodes.
   const depIds = new Set();
   if (task.parent_id && taskMap.has(String(task.parent_id))) {
     depIds.add(String(task.parent_id));
@@ -377,7 +428,6 @@ function toGanttTask(task, taskMap) {
   for (const d of descMeta.deps) {
     if (taskMap.has(String(d))) depIds.add(String(d));
   }
-  const dependencies = [...depIds].join(",");
 
   return {
     id: String(task.id),
@@ -385,9 +435,8 @@ function toGanttTask(task, taskMap) {
     start: formatDate(bounds.start),
     end: formatDate(bounds.end),
     progress: 0,
-    dependencies,
+    dependencies: [...depIds].join(","),
     custom_class: `${priorityClass}${recurringClass}${noDueClass}`,
-    _task: task,
   };
 }
 
@@ -419,7 +468,6 @@ function renderGantt(tasks) {
   currentTaskMap = new Map(filtered.map((t) => [String(t.id), t]));
   const taskMap = currentTaskMap;
 
-  // Sort parents before children, then by due date.
   const sorted = [...filtered].sort((a, b) => {
     const ap = a.parent_id ? 1 : 0;
     const bp = b.parent_id ? 1 : 0;
@@ -439,10 +487,13 @@ function renderGantt(tasks) {
     language: "en",
     on_view_change: () => scrollToToday(),
     on_click: (task) => {
-      // Look up the raw Todoist task by ID — Frappe Gantt may not preserve
-      // custom properties like _task on the objects it passes to callbacks.
       const raw = currentTaskMap.get(String(task.id));
-      if (raw) openDrawer(raw);
+      if (!raw) return;
+      if (linkState !== null) {
+        handleLinkClick(String(task.id), task.name);
+        return;
+      }
+      openDrawer(raw);
     },
     on_date_change: (task, start, end) => {
       const raw = currentTaskMap.get(String(task.id));
@@ -467,34 +518,24 @@ function renderGantt(tasks) {
               ? `<div class="desc">${escapeHtml(src.description)}</div>`
               : ""
           }
-          ${src.app_url || src.url ? `<div><a href="${src.app_url || src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>` : ""}
+          ${
+            src.app_url || src.url
+              ? `<div><a href="${src.app_url || src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>`
+              : ""
+          }
         </div>`;
     },
   });
 
-  // Frappe Gantt renders the full date range from the earliest start to the
-  // latest end, which can span weeks. Today is often near the right edge,
-  // leaving empty past-space on the left. Scroll the wrapper so today sits
-  // near the left, giving the user a "now and what's coming" view.
   scrollToToday();
 }
 
 function scrollToToday() {
-  // Wait one frame so Frappe Gantt has painted .today-highlight.
   requestAnimationFrame(() => {
     const wrapper = els.gantt.closest(".gantt-wrapper");
     if (!wrapper) return;
     const today = els.gantt.querySelector(".today-highlight");
-    let targetX;
-    if (today) {
-      // today-highlight is a <rect>; use its x attribute.
-      targetX = parseFloat(today.getAttribute("x")) || 0;
-    } else {
-      // Fallback: scroll roughly 2 days in from the left edge of the chart.
-      targetX = 0;
-    }
-    // Position today ~80px from the left edge of the viewport so a little
-    // past context is still visible, but upcoming work dominates the view.
+    const targetX = today ? parseFloat(today.getAttribute("x")) || 0 : 0;
     wrapper.scrollLeft = Math.max(0, targetX - 80);
   });
 }
@@ -507,16 +548,96 @@ async function updateTaskDueDate(task, end) {
       method: "POST",
       body: JSON.stringify({ due_date }),
     });
-    // Update in-memory task so further drags use the new date.
-    // Note: for recurring tasks, Todoist keeps the recurrence rule and will
-    // recalculate the next occurrence. Setting due_date shifts only the
-    // current occurrence; the task will reappear as recurring on reload.
+    // Update in-memory; note recurring tasks keep their recurrence rule
+    // server-side and will show the next occurrence on reload.
     task.due = { ...(task.due || {}), date: due_date };
     setStatus(`Rescheduled "${task.content}" to ${due_date}.`, "success");
   } catch (err) {
     setStatus(`Failed to reschedule: ${err.message}`, "error");
-    // Re-render to snap bar back to real date.
-    if (currentProjectId) loadTasks(currentProjectId);
+    if (activeProjects.length) loadAllTasks();
+  }
+}
+
+// ---------- Link mode ----------
+
+function enterLinkMode() {
+  linkState = {};
+  els.linkTasks.classList.add("btn-active");
+  els.linkTasks.textContent = "Cancel linking";
+  setStatus("Link mode: click the task that must finish first.", "info");
+  els.gantt.closest(".gantt-wrapper").classList.add("link-mode");
+}
+
+function exitLinkMode() {
+  linkState = null;
+  els.linkTasks.classList.remove("btn-active");
+  els.linkTasks.textContent = "Link tasks";
+  els.gantt.closest(".gantt-wrapper").classList.remove("link-mode");
+  setStatus("", "");
+}
+
+function handleLinkClick(id, name) {
+  if (!linkState.sourceId) {
+    // First click: record the source ("must finish first") task.
+    linkState.sourceId = id;
+    linkState.sourceName = name;
+    setStatus(
+      `"${name}" will be the predecessor. Now click the task that depends on it.`,
+      "info"
+    );
+  } else if (linkState.sourceId === id) {
+    // Clicked the same bar twice: cancel.
+    exitLinkMode();
+  } else {
+    // Second click: create the arrow from source → this target.
+    createDependency(linkState.sourceId, id);
+    exitLinkMode();
+  }
+}
+
+async function createDependency(sourceId, targetId) {
+  const target = currentTaskMap.get(targetId);
+  if (!target) return;
+
+  const desc = target.description || "";
+  // Look for an existing deps line to append to.
+  const depsMatch = desc.match(
+    /((?:^|\n)\s*(?:deps|depends|depends_on)\s*:\s*)([^\n]+)/i
+  );
+
+  let newDesc;
+  if (depsMatch) {
+    const existing = depsMatch[2]
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (existing.includes(sourceId)) {
+      setStatus("That dependency already exists.", "info");
+      return;
+    }
+    existing.push(sourceId);
+    newDesc = desc.replace(
+      depsMatch[0],
+      `${depsMatch[1]}${existing.join(", ")}`
+    );
+  } else {
+    newDesc = desc ? `${desc}\ndeps: ${sourceId}` : `deps: ${sourceId}`;
+  }
+
+  try {
+    setStatus("Adding dependency…");
+    const updated = await api(`/tasks/${targetId}`, {
+      method: "POST",
+      body: JSON.stringify({ description: newDesc }),
+    });
+    if (updated) {
+      const idx = currentTasks.findIndex((t) => String(t.id) === targetId);
+      if (idx >= 0) currentTasks[idx] = updated;
+    }
+    renderGantt(currentTasks);
+    setStatus("Dependency added.", "success");
+  } catch (err) {
+    setStatus(`Failed to add dependency: ${err.message}`, "error");
   }
 }
 
@@ -543,7 +664,6 @@ function openDrawer(task) {
   els.drawer.setAttribute("aria-hidden", "false");
   document.body.classList.add("drawer-open");
   document.addEventListener("keydown", handleDrawerKey);
-  // Focus the title for quick edits.
   setTimeout(() => f.content.focus(), 60);
 }
 
@@ -569,7 +689,6 @@ function drawerMetaHtml(task) {
     if (!isNaN(d.getTime())) parts.push(`Created ${d.toLocaleDateString()}`);
   }
   if (task.comment_count) parts.push(`${task.comment_count} comment(s)`);
-  // Task ID — useful when authoring `deps: <id>` in another task's description.
   parts.push(
     `ID: <code style="user-select:all">${escapeHtml(String(task.id))}</code>`
   );
@@ -594,11 +713,10 @@ els.drawerForm.addEventListener("submit", async (e) => {
     priority: Number(f.priority.value) || 1,
     labels,
   };
-  // Due date: pick date picker value, or clear it if emptied.
   if (f.due_date.value) {
     body.due_date = f.due_date.value;
   } else if (drawerTask.due) {
-    body.due_string = "no date"; // clears the due date in Todoist
+    body.due_string = "no date";
   }
   try {
     setStatus(`Saving "${body.content}"…`);
@@ -606,8 +724,9 @@ els.drawerForm.addEventListener("submit", async (e) => {
       method: "POST",
       body: JSON.stringify(body),
     });
-    // Merge updated task into the in-memory list and re-render.
-    const idx = currentTasks.findIndex((t) => t.id === drawerTask.id);
+    const idx = currentTasks.findIndex(
+      (t) => String(t.id) === String(drawerTask.id)
+    );
     if (idx >= 0 && updated) currentTasks[idx] = updated;
     renderGantt(currentTasks);
     setStatus(`Saved "${body.content}".`, "success");
@@ -623,7 +742,9 @@ els.drawerComplete.addEventListener("click", async () => {
   try {
     setStatus("Marking complete…");
     await api(`/tasks/${drawerTask.id}/close`, { method: "POST" });
-    currentTasks = currentTasks.filter((t) => t.id !== drawerTask.id);
+    currentTasks = currentTasks.filter(
+      (t) => String(t.id) !== String(drawerTask.id)
+    );
     renderGantt(currentTasks);
     setStatus("Task completed.", "success");
     closeDrawer();
@@ -636,8 +757,6 @@ els.drawerPopup.addEventListener("click", () => {
   if (!drawerTask) return;
   const url = drawerTask.app_url || drawerTask.url;
   if (!url) return;
-  // Open Todoist in a sized popup window. It can't be iframed (Todoist
-  // sends X-Frame-Options: DENY), but a popup feels close to embedded.
   const w = 480;
   const h = 720;
   const left = Math.max(0, window.screenX + window.outerWidth - w - 20);

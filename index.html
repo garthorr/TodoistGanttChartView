@@ -52,11 +52,15 @@
           </small>
         </div>
 
-        <div class="field">
-          <label for="projects">Project</label>
-          <select id="projects">
-            <option value="">— Choose a project —</option>
-          </select>
+        <div class="field field-projects">
+          <label for="projects">Projects</label>
+          <div class="row">
+            <select id="projects">
+              <option value="">— Add a project —</option>
+            </select>
+            <button id="add_project" type="button" class="btn">Add</button>
+          </div>
+          <div id="project_chips" class="project-chips"></div>
         </div>
 
         <div class="field">
@@ -77,6 +81,11 @@
           </label>
         </div>
       </section>
+
+      <div class="chart-actions">
+        <button id="link_tasks" type="button" class="btn">Link tasks</button>
+        <span class="chart-actions-hint">Click to enter link mode, then click two bars to add a dependency arrow.</span>
+      </div>
 
       <div id="status" class="status" role="status" aria-live="polite"></div>
 
