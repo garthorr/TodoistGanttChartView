@@ -425,6 +425,7 @@ body {
 }
 .drawer-field input[type="text"],
 .drawer-field input[type="date"],
+.drawer-field input[type="time"],
 .drawer-field textarea,
 .drawer-field select {
   padding: 8px 10px;
@@ -444,6 +445,18 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.date-time-row {
+  display: flex;
+  gap: 6px;
+}
+.date-time-row input[type="date"] {
+  flex: 1 1 auto;
+}
+.date-time-row input[type="time"] {
+  flex: 0 0 auto;
+  width: 90px;
 }
 
 .drawer-meta {

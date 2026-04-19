@@ -350,6 +350,12 @@ function formatDate(d) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function formatDatetime(d) {
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${formatDate(d)}T${hh}:${mi}:00`;
+}
+
 // ---------- Projects ----------
 
 async function loadProjects() {
@@ -533,8 +539,12 @@ function taskBounds(task, descMeta) {
 
   // Parse deadline as bar END (hard deadline).
   let endFromDeadline = null;
-  if (task.deadline && task.deadline.date) {
-    endFromDeadline = parseIsoDate(`${task.deadline.date}T23:59:59`);
+  if (task.deadline) {
+    if (task.deadline.datetime) {
+      endFromDeadline = parseIsoDate(task.deadline.datetime);
+    } else if (task.deadline.date) {
+      endFromDeadline = parseIsoDate(`${task.deadline.date}T23:59:59`);
+    }
   }
 
   // start: description convention overrides the due-date start.
@@ -660,12 +670,12 @@ function renderGantt(tasks) {
 
 async function updateTaskAfterDrag(raw, ganttTask) {
   try {
-    const dueDate = formatDate(ganttTask.start_date);
+    const dueDatetime = formatDatetime(ganttTask.start_date);
     const deadlineDate = formatDate(ganttTask.end_date);
     setStatus(`Updating "${raw.content}"\u2026`);
     const updated = await api(`/tasks/${raw.id}`, {
       method: "POST",
-      body: JSON.stringify({ due_date: dueDate, deadline_date: deadlineDate }),
+      body: JSON.stringify({ due_datetime: dueDatetime, deadline_date: deadlineDate }),
     });
     if (updated) {
       const idx = currentTasks.findIndex((t) => String(t.id) === String(raw.id));
@@ -673,7 +683,7 @@ async function updateTaskAfterDrag(raw, ganttTask) {
       currentTaskMap.set(String(raw.id), updated);
     }
     setStatus(
-      `Rescheduled "${raw.content}": start ${dueDate}, deadline ${deadlineDate}.`,
+      `Rescheduled "${raw.content}": start ${dueDatetime}, deadline ${deadlineDate}.`,
       "success"
     );
   } catch (err) {
@@ -786,7 +796,14 @@ function openDrawer(task) {
   els.drawerTitle.textContent = task.content;
   f.content.value = task.content;
   f.description.value = task.description || "";
-  f.due_date.value = (task.due && task.due.date) || "";
+  if (task.due && task.due.datetime) {
+    const dt = new Date(task.due.datetime);
+    f.due_date.value = formatDate(dt);
+    f.due_time.value = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+  } else {
+    f.due_date.value = (task.due && task.due.date) || "";
+    f.due_time.value = "";
+  }
   f.priority.value = String(task.priority || 1);
   f.labels.value = (task.labels || []).join(", ");
   els.drawerOpen.href = task.app_url || task.url || "#";
@@ -844,7 +861,11 @@ els.drawerForm.addEventListener("submit", async (e) => {
     labels,
   };
   if (f.due_date.value) {
-    body.due_date = f.due_date.value;
+    if (f.due_time.value) {
+      body.due_datetime = `${f.due_date.value}T${f.due_time.value}:00`;
+    } else {
+      body.due_date = f.due_date.value;
+    }
   } else if (drawerTask.due) {
     body.due_string = "no date";
   }
