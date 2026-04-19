@@ -500,8 +500,17 @@ async function loadAllTasks() {
 
 function parseIsoDate(str) {
   if (!str) return null;
-  const d = new Date(str);
+  // Todoist returns microseconds (6 decimal places); strip to milliseconds
+  // so all browsers accept the string.
+  const normalized = str.replace(/(\.\d{3})\d+/, "$1");
+  const d = new Date(normalized);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// Parse a YYYY-MM-DD string as LOCAL midnight (avoids UTC-date ambiguity).
+function localDate(dateStr, h, m, s) {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  return new Date(y, mo - 1, d, h || 0, m || 0, s || 0);
 }
 
 function parseDescription(description) {
@@ -539,11 +548,22 @@ function taskBounds(task, descMeta) {
   const defaultMs = getDefaultDurationMs();
 
   // Parse due date as bar START (when work begins).
+  // Todoist returns due.datetime in UTC. If the UTC time is exactly midnight
+  // (T00:00:00Z), Todoist is signalling a date-only task — use due.date at
+  // local midnight instead, otherwise UTC midnight becomes noon for UTC+12 users.
   let startFromDue = null;
   if (due && due.datetime) {
-    startFromDue = parseIsoDate(due.datetime);
-  } else if (due && due.date) {
-    startFromDue = parseIsoDate(`${due.date}T00:00:00`);
+    const dt = parseIsoDate(due.datetime);
+    if (dt) {
+      const isDateOnly =
+        dt.getUTCHours() === 0 &&
+        dt.getUTCMinutes() === 0 &&
+        dt.getUTCSeconds() === 0;
+      startFromDue = isDateOnly ? localDate(due.date) : dt;
+    }
+  }
+  if (!startFromDue && due && due.date) {
+    startFromDue = localDate(due.date);
   }
 
   // Parse deadline as bar END (hard deadline).
@@ -552,14 +572,14 @@ function taskBounds(task, descMeta) {
     if (task.deadline.datetime) {
       endFromDeadline = parseIsoDate(task.deadline.datetime);
     } else if (task.deadline.date) {
-      endFromDeadline = parseIsoDate(`${task.deadline.date}T23:59:59`);
+      endFromDeadline = localDate(task.deadline.date, 23, 59, 59);
     }
   }
 
   // start: description convention overrides the due-date start.
   let start = null;
   if (descMeta && descMeta.start) {
-    start = parseIsoDate(`${descMeta.start}T00:00:00`);
+    start = localDate(descMeta.start);
   }
   if (!start) start = startFromDue;
 
