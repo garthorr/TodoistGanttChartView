@@ -1,6 +1,13 @@
 # Ganttist — static Gantt viewer for Todoist, served by nginx.
-# There's no build step (no bundler, no package.json), so a single-stage
-# image is enough. Image size is ~25 MB.
+# Two-stage build:
+#   stage 1  downloads dhtmlxGantt (GPL v2) from the official CDN
+#   stage 2  is the final nginx:alpine image with everything bundled locally
+# Bundling eliminates all runtime CDN dependencies and CDN-blocking issues.
+
+FROM alpine:3.20 AS vendor
+RUN apk add --no-cache curl ca-certificates
+RUN curl -fsSL -o /dhtmlxgantt.js  "https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js" && \
+    curl -fsSL -o /dhtmlxgantt.css "https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css"
 
 FROM nginx:1.27-alpine
 
@@ -12,6 +19,10 @@ COPY index.html /usr/share/nginx/html/index.html
 COPY css/    /usr/share/nginx/html/css/
 COPY js/     /usr/share/nginx/html/js/
 COPY images/ /usr/share/nginx/html/images/
+
+# Install dhtmlxGantt vendor files downloaded in the first stage.
+COPY --from=vendor /dhtmlxgantt.js  /usr/share/nginx/html/js/dhtmlxgantt.js
+COPY --from=vendor /dhtmlxgantt.css /usr/share/nginx/html/css/dhtmlxgantt.css
 
 EXPOSE 80
 
