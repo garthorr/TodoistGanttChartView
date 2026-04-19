@@ -136,6 +136,7 @@ function initGantt() {
     if (task.priorityClass) cls.push(task.priorityClass);
     if (task.recurring) cls.push("recurring");
     if (task.noDue) cls.push("no-due");
+    if (task.isParent) cls.push("summary-task");
     return cls.join(" ");
   };
 
@@ -581,6 +582,10 @@ function convertToGanttData(tasks) {
   const links = [];
   let linkId = 1;
 
+  const parentIds = new Set(
+    tasks.map((t) => t.parent_id).filter(Boolean).map(String)
+  );
+
   for (const task of tasks) {
     const descMeta = parseDescription(task.description);
     let bounds = taskBounds(task, descMeta);
@@ -604,6 +609,7 @@ function convertToGanttData(tasks) {
       priorityClass: "priority-p" + (5 - (task.priority || 1)),
       recurring: !!(task.due && task.due.is_recurring),
       noDue: !task.due,
+      isParent: parentIds.has(String(task.id)),
     });
 
     // Dependency arrows from description deps: line.

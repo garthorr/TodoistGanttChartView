@@ -334,6 +334,20 @@ body {
   opacity: 0.45;
 }
 
+/* Summary (parent) tasks — darker, bolder, thicker border */
+.gantt_task_line.summary-task {
+  filter: brightness(0.78) saturate(1.1) !important;
+  border-width: 2px !important;
+  border-radius: 3px !important;
+}
+.gantt_task_line.summary-task .gantt_task_content {
+  font-weight: 700;
+}
+/* Bold the task name in the grid column too */
+.gantt_row.summary-task .gantt_tree_content {
+  font-weight: 600;
+}
+
 /* --- Task drawer --- */
 .drawer {
   position: fixed;
