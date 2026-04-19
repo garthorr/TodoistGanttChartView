@@ -136,8 +136,16 @@ function initGantt() {
     if (task.priorityClass) cls.push(task.priorityClass);
     if (task.recurring) cls.push("recurring");
     if (task.noDue) cls.push("no-due");
-    if (task.isParent) cls.push("summary-task");
+    if (gantt.hasChild(task.id)) cls.push("summary-task");
     return cls.join(" ");
+  };
+
+  gantt.templates.grid_row_class = function (start, end, task) {
+    return gantt.hasChild(task.id) ? "summary-task" : "";
+  };
+
+  gantt.templates.date_grid = function (date) {
+    return gantt.date.date_to_str("%d %b")(date);
   };
 
   gantt.templates.tooltip_text = function (start, end, task) {
@@ -582,9 +590,7 @@ function convertToGanttData(tasks) {
   const links = [];
   let linkId = 1;
 
-  const parentIds = new Set(
-    tasks.map((t) => t.parent_id).filter(Boolean).map(String)
-  );
+  const fmtDate = gantt.date.date_to_str(gantt.config.date_format);
 
   for (const task of tasks) {
     const descMeta = parseDescription(task.description);
@@ -598,8 +604,8 @@ function convertToGanttData(tasks) {
     data.push({
       id: String(task.id),
       text: task.content,
-      start_date: bounds.start,
-      end_date: bounds.end,
+      start_date: fmtDate(bounds.start),
+      end_date: fmtDate(bounds.end),
       progress: 0,
       open: true,
       parent:
@@ -609,7 +615,6 @@ function convertToGanttData(tasks) {
       priorityClass: "priority-p" + (5 - (task.priority || 1)),
       recurring: !!(task.due && task.due.is_recurring),
       noDue: !task.due,
-      isParent: parentIds.has(String(task.id)),
     });
 
     // Dependency arrows from description deps: line.
