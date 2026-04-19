@@ -11,7 +11,13 @@ const TOKEN_KEY = "todoist_gantt_token";
 const PROJECTS_KEY = "todoist_gantt_projects";
 const VIEW_KEY = "todoist_gantt_view";
 const NODUE_KEY = "todoist_gantt_nodue";
+const DEFAULT_DUR_KEY = "todoist_gantt_defdur";
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function getDefaultDurationMs() {
+  const val = localStorage.getItem(DEFAULT_DUR_KEY) || "480";
+  return parseInt(val, 10) * 60 * 1000;
+}
 
 let apiBase = null;
 
@@ -40,6 +46,7 @@ const els = {
   drawerComplete: document.getElementById("drawer_complete"),
   drawerPopup: document.getElementById("drawer_popup"),
   drawerOpen: document.getElementById("drawer_open"),
+  defaultDuration: document.getElementById("default_duration"),
 };
 
 let ganttReady = false;
@@ -55,6 +62,8 @@ if (savedToken) els.token.value = savedToken;
 const savedView = localStorage.getItem(VIEW_KEY);
 if (savedView) els.viewMode.value = savedView;
 if (localStorage.getItem(NODUE_KEY) === "1") els.includeNoDue.checked = true;
+const savedDefdur = localStorage.getItem(DEFAULT_DUR_KEY);
+if (savedDefdur) els.defaultDuration.value = savedDefdur;
 
 try {
   activeProjects = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "[]");
@@ -89,6 +98,11 @@ els.includeNoDue.addEventListener("change", () => {
   if (currentTasks.length) renderGantt(currentTasks);
 });
 
+els.defaultDuration.addEventListener("change", () => {
+  localStorage.setItem(DEFAULT_DUR_KEY, els.defaultDuration.value);
+  if (currentTasks.length) renderGantt(currentTasks);
+});
+
 initGantt();
 if (savedToken) loadProjects();
 
@@ -114,7 +128,7 @@ function initGantt() {
 
   gantt.config.columns = [
     { name: "text", label: "Task", tree: true, width: "*", min_width: 150 },
-    { name: "end_date", label: "Due", align: "center", width: 80 },
+    { name: "start_date", label: "Start", align: "center", width: 80 },
   ];
 
   gantt.templates.task_class = function (start, end, task) {
@@ -129,13 +143,14 @@ function initGantt() {
     var src = currentTaskMap.get(String(task.id)) || {};
     var pr = src.priority || 1;
     var labels = (src.labels || []).join(", ") || "\u2014";
-    var due = (src.due && (src.due.string || src.due.date)) || "No due date";
+    var startStr = (src.due && (src.due.string || src.due.date)) || "No start date";
+    var deadlineStr = (src.deadline && src.deadline.date) || null;
     var parts = [
       "<b>" + escapeHtml(task.text) + "</b>",
-      "Due: " + escapeHtml(due),
-      "Priority: P" + (5 - pr),
-      "Labels: " + escapeHtml(labels),
+      "Start: " + escapeHtml(startStr),
     ];
+    if (deadlineStr) parts.push("Deadline: " + escapeHtml(deadlineStr));
+    parts.push("Priority: P" + (5 - pr), "Labels: " + escapeHtml(labels));
     if (src.description) {
       parts.push(
         '<span style="color:#aaa;font-size:12px">' +
@@ -161,7 +176,7 @@ function initGantt() {
   gantt.attachEvent("onAfterTaskDrag", function (id) {
     var task = gantt.getTask(id);
     var raw = currentTaskMap.get(String(id));
-    if (raw) updateTaskDueDate(raw, task.end_date);
+    if (raw) updateTaskAfterDrag(raw, task);
   });
 
   gantt.attachEvent("onAfterLinkAdd", function (id, link) {
@@ -493,42 +508,62 @@ function parseDescription(description) {
   return meta;
 }
 
-function taskBounds(task, descMeta) {
-  const due = task.due;
-  let end;
-  if (due && due.datetime) {
-    end = parseIsoDate(due.datetime);
-  } else if (due && due.date) {
-    end = parseIsoDate(`${due.date}T23:59:59`);
-  }
-  if (!end) return null;
-
-  let start;
-  if (descMeta && descMeta.start) {
-    const s = parseIsoDate(`${descMeta.start}T00:00:00`);
-    if (s && s < end) start = s;
-  }
-  if (!start && task.duration) {
-    const minutes =
+function taskDurationMs(task) {
+  if (task.duration) {
+    const mins =
       task.duration.unit === "day"
         ? task.duration.amount * 24 * 60
         : task.duration.amount;
-    start = new Date(end.getTime() - minutes * 60 * 1000);
+    return mins * 60 * 1000;
   }
-  if (!start) {
-    const addedAt =
-      parseIsoDate(task.added_at) || parseIsoDate(task.created_at);
-    const maxLookback = new Date(end.getTime() - 7 * DAY_MS);
-    if (addedAt && addedAt > maxLookback && addedAt < end) {
-      start = addedAt;
-    } else {
-      start = new Date(end.getTime() - 3 * DAY_MS);
-    }
+  return getDefaultDurationMs();
+}
+
+function taskBounds(task, descMeta) {
+  const due = task.due;
+  const defaultMs = getDefaultDurationMs();
+
+  // Parse due date as bar START (when work begins).
+  let startFromDue = null;
+  if (due && due.datetime) {
+    startFromDue = parseIsoDate(due.datetime);
+  } else if (due && due.date) {
+    startFromDue = parseIsoDate(`${due.date}T00:00:00`);
   }
 
-  if (start >= end) start = new Date(end.getTime() - DAY_MS);
-  if (end - start < DAY_MS) start = new Date(end.getTime() - DAY_MS);
-  return { start, end };
+  // Parse deadline as bar END (hard deadline).
+  let endFromDeadline = null;
+  if (task.deadline && task.deadline.date) {
+    endFromDeadline = parseIsoDate(`${task.deadline.date}T23:59:59`);
+  }
+
+  // start: description convention overrides the due-date start.
+  let start = null;
+  if (descMeta && descMeta.start) {
+    start = parseIsoDate(`${descMeta.start}T00:00:00`);
+  }
+  if (!start) start = startFromDue;
+
+  const end = endFromDeadline;
+
+  // Both start and deadline present.
+  if (start && end) {
+    if (start >= end) return { start, end: new Date(start.getTime() + defaultMs) };
+    return { start, end };
+  }
+
+  // Due date only → end = start + (task.duration || default).
+  if (start && !end) {
+    return { start, end: new Date(start.getTime() + taskDurationMs(task)) };
+  }
+
+  // Deadline only → start = end − (task.duration || default).
+  if (!start && end) {
+    return { start: new Date(end.getTime() - taskDurationMs(task)), end };
+  }
+
+  // No date info at all.
+  return null;
 }
 
 function convertToGanttData(tasks) {
@@ -542,7 +577,7 @@ function convertToGanttData(tasks) {
     if (!bounds) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      bounds = { start: today, end: new Date(today.getTime() + DAY_MS) };
+      bounds = { start: today, end: new Date(today.getTime() + getDefaultDurationMs()) };
     }
 
     data.push({
@@ -623,16 +658,24 @@ function renderGantt(tasks) {
   gantt.showDate(new Date());
 }
 
-async function updateTaskDueDate(task, end) {
+async function updateTaskAfterDrag(raw, ganttTask) {
   try {
-    const due_date = formatDate(end);
-    setStatus(`Updating "${task.content}"\u2026`);
-    await api(`/tasks/${task.id}`, {
+    const dueDate = formatDate(ganttTask.start_date);
+    const deadlineDate = formatDate(ganttTask.end_date);
+    setStatus(`Updating "${raw.content}"\u2026`);
+    const updated = await api(`/tasks/${raw.id}`, {
       method: "POST",
-      body: JSON.stringify({ due_date }),
+      body: JSON.stringify({ due_date: dueDate, deadline_date: deadlineDate }),
     });
-    task.due = { ...(task.due || {}), date: due_date };
-    setStatus(`Rescheduled "${task.content}" to ${due_date}.`, "success");
+    if (updated) {
+      const idx = currentTasks.findIndex((t) => String(t.id) === String(raw.id));
+      if (idx >= 0) currentTasks[idx] = updated;
+      currentTaskMap.set(String(raw.id), updated);
+    }
+    setStatus(
+      `Rescheduled "${raw.content}": start ${dueDate}, deadline ${deadlineDate}.`,
+      "success"
+    );
   } catch (err) {
     setStatus(`Failed to reschedule: ${err.message}`, "error");
     if (activeProjects.length) loadAllTasks();
