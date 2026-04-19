@@ -14,7 +14,6 @@
   --p2: #eb8909;
   --p3: #246fe0;
   --p4: #808080;
-  /* System serif: "New York" on Apple, Georgia elsewhere. No external loads. */
   --font-serif: ui-serif, "New York", "Iowan Old Style", Georgia,
     "Times New Roman", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
@@ -206,32 +205,28 @@ body {
   color: var(--error);
 }
 
+/* --- Gantt wrapper ---
+   dhtmlxGantt fills its container, so we give it an explicit height.
+   It handles its own internal scroll. */
 .gantt-wrapper {
   position: relative;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 16px;
   min-height: 200px;
-  overflow-x: auto;
-  overflow-y: auto;
-  max-height: 75vh;
+  overflow: hidden;
+}
+
+#gantt {
+  width: 100%;
+  height: 65vh;
 }
 
 .empty {
   margin: 40px auto;
   text-align: center;
   color: var(--muted);
-}
-
-/* Do NOT force #gantt to width: 100%.
-   Frappe Gantt renders an SVG whose natural width spans the full task range
-   (often thousands of pixels). Forcing 100% squashes it and hides the
-   horizontal scroll. Let the SVG keep its intrinsic size and let
-   .gantt-wrapper scroll. */
-#gantt {
-  display: block;
 }
 
 .legend {
@@ -287,52 +282,56 @@ body {
   text-decoration: none;
 }
 
-/* --- Frappe Gantt bar colors by priority ---
-   Use hardcoded hex + !important so these reliably beat Frappe Gantt's
-   own .gantt .bar-group .bar rule regardless of cascade order or whether
-   CSS custom-properties resolve inside an SVG rendering context. */
-.gantt .bar-wrapper.priority-p1 .bar,
-.gantt .bar-wrapper.priority-p1 .bar-progress { fill: #db4c3f !important; }
-
-.gantt .bar-wrapper.priority-p2 .bar,
-.gantt .bar-wrapper.priority-p2 .bar-progress { fill: #eb8909 !important; }
-
-.gantt .bar-wrapper.priority-p3 .bar,
-.gantt .bar-wrapper.priority-p3 .bar-progress { fill: #246fe0 !important; }
-
-.gantt .bar-wrapper.priority-p4 .bar,
-.gantt .bar-wrapper.priority-p4 .bar-progress { fill: #9e9e9e !important; }
-
-.gantt .bar-wrapper.recurring .bar {
-  stroke: rgba(255,255,255,0.6) !important;
-  stroke-width: 1.5px !important;
-  stroke-dasharray: 5 3 !important;
+/* --- dhtmlxGantt bar colors by priority --- */
+.gantt_task_line.priority-p1 {
+  background-color: #db4c3f !important;
+  border-color: #b93b30 !important;
 }
-.gantt .bar-wrapper.no-due .bar {
+.gantt_task_line.priority-p1 .gantt_task_progress {
+  background-color: #b93b30 !important;
+}
+
+.gantt_task_line.priority-p2 {
+  background-color: #eb8909 !important;
+  border-color: #c67507 !important;
+}
+.gantt_task_line.priority-p2 .gantt_task_progress {
+  background-color: #c67507 !important;
+}
+
+.gantt_task_line.priority-p3 {
+  background-color: #246fe0 !important;
+  border-color: #1d5ab5 !important;
+}
+.gantt_task_line.priority-p3 .gantt_task_progress {
+  background-color: #1d5ab5 !important;
+}
+
+.gantt_task_line.priority-p4 {
+  background-color: #9e9e9e !important;
+  border-color: #7e7e7e !important;
+}
+.gantt_task_line.priority-p4 .gantt_task_progress {
+  background-color: #7e7e7e !important;
+}
+
+.gantt_task_line .gantt_task_content {
+  color: #fff !important;
+  font-weight: 500;
+}
+
+.gantt_task_line.recurring {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.2) 3px,
+    rgba(255, 255, 255, 0.2) 6px
+  ) !important;
+}
+
+.gantt_task_line.no-due {
   opacity: 0.45;
-}
-
-/* White labels on all coloured bars */
-.gantt .bar-wrapper .bar-label {
-  fill: #ffffff !important;
-  font-weight: 500 !important;
-}
-
-.gantt-popup {
-  max-width: 280px;
-}
-.gantt-popup h4 {
-  margin: 0 0 6px;
-  font-size: 14px;
-}
-.gantt-popup .desc {
-  margin-top: 6px;
-  color: #ddd;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-.gantt-popup a {
-  color: #7ab4ff;
 }
 
 /* --- Task drawer --- */
@@ -477,16 +476,6 @@ body {
   background: var(--bg);
 }
 
-.btn-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.btn-active:hover {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
-}
-
 /* --- Project chips --- */
 .project-chips {
   display: flex;
@@ -519,23 +508,4 @@ body {
 }
 .chip-remove:hover {
   color: var(--accent);
-}
-
-/* --- Chart actions bar --- */
-.chart-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 12px 0 0;
-}
-
-.chart-actions-hint {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-/* --- Link mode --- */
-.gantt-wrapper.link-mode,
-.gantt-wrapper.link-mode svg {
-  cursor: crosshair;
 }

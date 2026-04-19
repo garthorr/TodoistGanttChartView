@@ -7,7 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="images/favicon.svg" />
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css"
+      href="https://cdn.jsdelivr.net/npm/dhtmlx-gantt@8.0/codebase/dhtmlxgantt.css"
     />
     <link rel="stylesheet" href="css/style.css" />
   </head>
@@ -19,7 +19,7 @@
           <h1 class="brand">Ganttist</h1>
           <p class="tagline">
             A Gantt viewer for your Todoist projects. Drag bars to reschedule,
-            click to edit.
+            click to edit, drag between bars to link.
           </p>
         </div>
       </div>
@@ -66,8 +66,9 @@
         <div class="field">
           <label for="view_mode">View</label>
           <select id="view_mode">
-            <option value="Quarter Day">Quarter Day</option>
-            <option value="Half Day">Half Day</option>
+            <option value="Hour">Hour</option>
+            <option value="6 Hours">6 Hours</option>
+            <option value="12 Hours">12 Hours</option>
             <option value="Day" selected>Day</option>
             <option value="Week">Week</option>
             <option value="Month">Month</option>
@@ -82,11 +83,6 @@
         </div>
       </section>
 
-      <div class="chart-actions">
-        <button id="link_tasks" type="button" class="btn">Link tasks</button>
-        <span class="chart-actions-hint">Click to enter link mode, then click two bars to add a dependency arrow.</span>
-      </div>
-
       <div id="status" class="status" role="status" aria-live="polite"></div>
 
       <section class="gantt-wrapper">
@@ -94,7 +90,7 @@
           Enter a token, load your projects, then choose one to see its Gantt
           chart.
         </p>
-        <svg id="gantt"></svg>
+        <div id="gantt"></div>
       </section>
 
       <section class="legend" aria-label="Legend">
@@ -178,7 +174,7 @@
       </div>
     </aside>
 
-    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dhtmlx-gantt@8.0/codebase/dhtmlxgantt.js"></script>
     <script src="js/todoist.js"></script>
   </body>
 </html>

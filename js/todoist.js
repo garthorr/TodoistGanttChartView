@@ -1,7 +1,7 @@
 /**
  * Ganttist — a Gantt viewer for Todoist.
  *
- * Uses the Todoist REST API v1 (Bearer token, JSON) and Frappe Gantt.
+ * Uses the Todoist REST API v1 (Bearer token, JSON) and dhtmlxGantt.
  * No jQuery, no build step, no server needed.
  */
 
@@ -15,7 +15,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 let apiBase = null;
 
-// Todoist API v1 may return either a plain array or { items: [...] }.
 function normalizeList(data) {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
@@ -31,7 +30,6 @@ const els = {
   projectChips: document.getElementById("project_chips"),
   viewMode: document.getElementById("view_mode"),
   includeNoDue: document.getElementById("include_nodue"),
-  linkTasks: document.getElementById("link_tasks"),
   status: document.getElementById("status"),
   empty: document.getElementById("empty-state"),
   gantt: document.getElementById("gantt"),
@@ -44,15 +42,10 @@ const els = {
   drawerOpen: document.getElementById("drawer_open"),
 };
 
-let ganttInstance = null;
+let ganttReady = false;
 let currentTasks = [];
-// Module-level lookup by String(id) — Frappe Gantt may not preserve custom
-// properties on task objects it passes to callbacks.
 let currentTaskMap = new Map();
-// Active projects shown on the chart: [{ id, name }, ...]
 let activeProjects = [];
-// Link mode: null = off, {} = waiting for source, { sourceId, sourceName } = waiting for target.
-let linkState = null;
 
 // ---------- init ----------
 
@@ -82,14 +75,13 @@ els.addProject.addEventListener("click", () => {
   addProjectToChart(id, option.textContent.trim());
 });
 
-// Enter key in the dropdown acts as "Add".
 els.projects.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.addProject.click();
 });
 
 els.viewMode.addEventListener("change", () => {
   localStorage.setItem(VIEW_KEY, els.viewMode.value);
-  if (ganttInstance) ganttInstance.change_view_mode(els.viewMode.value);
+  applyViewMode(els.viewMode.value);
 });
 
 els.includeNoDue.addEventListener("change", () => {
@@ -97,21 +89,152 @@ els.includeNoDue.addEventListener("change", () => {
   if (currentTasks.length) renderGantt(currentTasks);
 });
 
-els.linkTasks.addEventListener("click", () => {
-  if (linkState !== null) {
-    exitLinkMode();
-  } else {
-    enterLinkMode();
-  }
-});
-
-// Escape cancels link mode (and the drawer key handler covers the drawer).
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && linkState !== null) exitLinkMode();
-});
-
-// Auto-load projects on page load if token already saved.
+initGantt();
 if (savedToken) loadProjects();
+
+// ---------- dhtmlxGantt setup ----------
+
+function initGantt() {
+  gantt.config.date_format = "%Y-%m-%d %H:%i";
+  gantt.config.drag_links = true;
+  gantt.config.drag_move = true;
+  gantt.config.drag_resize = true;
+  gantt.config.drag_progress = false;
+  gantt.config.show_links = true;
+  gantt.config.details_on_dblclick = false;
+  gantt.config.details_on_create = false;
+  gantt.config.row_height = 36;
+  gantt.config.bar_height = 24;
+  gantt.config.fit_tasks = true;
+  gantt.config.auto_scheduling = false;
+  gantt.config.open_tree_initially = true;
+  gantt.config.show_grid = true;
+  gantt.config.grid_width = 260;
+  gantt.config.min_column_width = 40;
+
+  gantt.config.columns = [
+    { name: "text", label: "Task", tree: true, width: "*", min_width: 150 },
+    { name: "end_date", label: "Due", align: "center", width: 80 },
+  ];
+
+  gantt.templates.task_class = function (start, end, task) {
+    var cls = [];
+    if (task.priorityClass) cls.push(task.priorityClass);
+    if (task.recurring) cls.push("recurring");
+    if (task.noDue) cls.push("no-due");
+    return cls.join(" ");
+  };
+
+  gantt.templates.tooltip_text = function (start, end, task) {
+    var src = currentTaskMap.get(String(task.id)) || {};
+    var pr = src.priority || 1;
+    var labels = (src.labels || []).join(", ") || "\u2014";
+    var due = (src.due && (src.due.string || src.due.date)) || "No due date";
+    var parts = [
+      "<b>" + escapeHtml(task.text) + "</b>",
+      "Due: " + escapeHtml(due),
+      "Priority: P" + (5 - pr),
+      "Labels: " + escapeHtml(labels),
+    ];
+    if (src.description) {
+      parts.push(
+        '<span style="color:#aaa;font-size:12px">' +
+          escapeHtml(src.description.substring(0, 120)) +
+          "</span>"
+      );
+    }
+    return parts.join("<br>");
+  };
+
+  applyViewMode(els.viewMode.value);
+
+  gantt.attachEvent("onTaskClick", function (id) {
+    var raw = currentTaskMap.get(String(id));
+    if (raw) openDrawer(raw);
+    return true;
+  });
+
+  gantt.attachEvent("onTaskDblClick", function () {
+    return false;
+  });
+
+  gantt.attachEvent("onAfterTaskDrag", function (id) {
+    var task = gantt.getTask(id);
+    var raw = currentTaskMap.get(String(id));
+    if (raw) updateTaskDueDate(raw, task.end_date);
+  });
+
+  gantt.attachEvent("onAfterLinkAdd", function (id, link) {
+    writeDependency(String(link.source), String(link.target), id);
+  });
+
+  gantt.attachEvent("onAfterLinkDelete", function (id, link) {
+    removeDependency(String(link.source), String(link.target));
+  });
+
+  try {
+    gantt.plugins({ tooltip: true });
+  } catch (_) {
+    // tooltip plugin may not be available in all editions
+  }
+
+  gantt.init("gantt");
+  ganttReady = true;
+}
+
+function applyViewMode(mode) {
+  switch (mode) {
+    case "Hour":
+      gantt.config.scales = [
+        { unit: "day", step: 1, format: "%d %M" },
+        { unit: "hour", step: 1, format: "%H:%i" },
+      ];
+      gantt.config.min_column_width = 40;
+      break;
+    case "6 Hours":
+      gantt.config.scales = [
+        { unit: "day", step: 1, format: "%d %M" },
+        { unit: "hour", step: 6, format: "%H:%i" },
+      ];
+      gantt.config.min_column_width = 50;
+      break;
+    case "12 Hours":
+      gantt.config.scales = [
+        { unit: "day", step: 1, format: "%d %M" },
+        { unit: "hour", step: 12, format: "%H:%i" },
+      ];
+      gantt.config.min_column_width = 60;
+      break;
+    case "Day":
+      gantt.config.scales = [
+        { unit: "month", step: 1, format: "%F %Y" },
+        { unit: "day", step: 1, format: "%d" },
+      ];
+      gantt.config.min_column_width = 30;
+      break;
+    case "Week":
+      gantt.config.scales = [
+        { unit: "month", step: 1, format: "%F %Y" },
+        { unit: "week", step: 1, format: "W%W" },
+      ];
+      gantt.config.min_column_width = 60;
+      break;
+    case "Month":
+      gantt.config.scales = [
+        { unit: "year", step: 1, format: "%Y" },
+        { unit: "month", step: 1, format: "%M" },
+      ];
+      gantt.config.min_column_width = 50;
+      break;
+    default:
+      gantt.config.scales = [
+        { unit: "month", step: 1, format: "%F %Y" },
+        { unit: "day", step: 1, format: "%d" },
+      ];
+      break;
+  }
+  if (ganttReady) gantt.render();
+}
 
 // ---------- API ----------
 
@@ -146,7 +269,9 @@ async function resolveApiBase(token) {
       return apiBase;
     }
   } catch (err) {
-    console.info("[Ganttist] no proxy detected, calling api.todoist.com directly");
+    console.info(
+      "[Ganttist] no proxy detected, calling api.todoist.com directly"
+    );
   }
   apiBase = DIRECT_API;
   return apiBase;
@@ -165,7 +290,7 @@ async function api(path, options = {}) {
   } catch (err) {
     const hint =
       base === DIRECT_API
-        ? " This is often a CORS or network issue — try running the included Docker image (which proxies through nginx)."
+        ? " This is often a CORS or network issue \u2014 try running the included Docker image (which proxies through nginx)."
         : "";
     throw new Error(`Could not reach Todoist (${err.message}).${hint}`);
   }
@@ -173,12 +298,14 @@ async function api(path, options = {}) {
     throw new Error(
       "Todoist rejected the API token (HTTP " +
         res.status +
-        "). Double-check you copied it from Settings → Integrations → Developer."
+        "). Double-check you copied it from Settings \u2192 Integrations \u2192 Developer."
     );
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Todoist API error ${res.status}: ${text || res.statusText}`);
+    throw new Error(
+      `Todoist API error ${res.status}: ${text || res.statusText}`
+    );
   }
   if (res.status === 204) return null;
   return res.json();
@@ -195,7 +322,9 @@ function escapeHtml(s) {
   return String(s).replace(
     /[&<>"']/g,
     (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[
+        c
+      ])
   );
 }
 
@@ -210,7 +339,7 @@ function formatDate(d) {
 
 async function loadProjects() {
   try {
-    setStatus("Loading projects…");
+    setStatus("Loading projects\u2026");
     const projects = normalizeList(await api("/projects"));
 
     const byParent = new Map();
@@ -231,18 +360,19 @@ async function loadProjects() {
     walk(null, 0);
 
     els.projects.innerHTML =
-      '<option value="">— Add a project —</option>' +
+      '<option value="">\u2014 Add a project \u2014</option>' +
       sorted
         .map(
           (p) =>
-            `<option value="${p.id}">${"  ".repeat(p.depth)}${escapeHtml(p.name)}</option>`
+            `<option value="${p.id}">${"\u00a0\u00a0".repeat(
+              p.depth
+            )}${escapeHtml(p.name)}</option>`
         )
         .join("");
 
     localStorage.setItem(TOKEN_KEY, els.token.value.trim());
     setStatus(`Loaded ${projects.length} projects.`, "success");
 
-    // Restore persisted active projects. Prune any that were deleted.
     const nameById = new Map(projects.map((p) => [String(p.id), p.name]));
     activeProjects = activeProjects.filter((p) => nameById.has(p.id));
     saveActiveProjects();
@@ -262,7 +392,7 @@ function saveActiveProjects() {
 function renderChips(nameById) {
   els.projectChips.innerHTML = "";
   for (const { id, name } of activeProjects) {
-    addChipDOM(id, nameById ? (nameById.get(id) || name) : name);
+    addChipDOM(id, nameById ? nameById.get(id) || name : name);
   }
 }
 
@@ -272,7 +402,9 @@ function addChipDOM(id, name) {
   chip.dataset.id = id;
   chip.innerHTML =
     `${escapeHtml(name)}` +
-    `<button class="chip-remove" aria-label="Remove ${escapeHtml(name)}" data-id="${escapeHtml(id)}">&times;</button>`;
+    `<button class="chip-remove" aria-label="Remove ${escapeHtml(
+      name
+    )}" data-id="${escapeHtml(id)}">&times;</button>`;
   els.projectChips.appendChild(chip);
 }
 
@@ -287,7 +419,9 @@ function addProjectToChart(id, name) {
 function removeProjectFromChart(id) {
   activeProjects = activeProjects.filter((p) => p.id !== id);
   saveActiveProjects();
-  const chip = els.projectChips.querySelector(`.chip[data-id="${CSS.escape(id)}"]`);
+  const chip = els.projectChips.querySelector(
+    `.chip[data-id="${CSS.escape(id)}"]`
+  );
   if (chip) chip.remove();
   loadAllTasks();
 }
@@ -306,13 +440,12 @@ async function loadAllTasks() {
     return;
   }
   try {
-    setStatus("Loading tasks…");
+    setStatus("Loading tasks\u2026");
     const batches = await Promise.all(
       activeProjects.map(({ id }) =>
         api(`/tasks?project_id=${encodeURIComponent(id)}`).then(normalizeList)
       )
     );
-    // Merge and deduplicate by task id.
     const seen = new Set();
     const merged = [];
     for (const batch of batches) {
@@ -325,9 +458,9 @@ async function loadAllTasks() {
     }
     currentTasks = merged;
     renderGantt(currentTasks);
-    const projectWord = activeProjects.length === 1 ? "project" : "projects";
+    const word = activeProjects.length === 1 ? "project" : "projects";
     setStatus(
-      `Loaded ${merged.length} tasks from ${activeProjects.length} ${projectWord}.`,
+      `Loaded ${merged.length} tasks from ${activeProjects.length} ${word}.`,
       "success"
     );
   } catch (err) {
@@ -341,13 +474,6 @@ function parseIsoDate(str) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// Todoist tasks don't have a native start date or dependency field, so we
-// let users add them inside the task description using simple conventions:
-//
-//   start: 2026-04-10
-//   deps: 7123456789, 7123456790
-//
-// These lines are picked up here and applied to the Gantt bar.
 function parseDescription(description) {
   const meta = { start: null, deps: [] };
   if (!description) return meta;
@@ -378,12 +504,10 @@ function taskBounds(task, descMeta) {
   if (!end) return null;
 
   let start;
-  // 1. Explicit start: date in description wins.
   if (descMeta && descMeta.start) {
     const s = parseIsoDate(`${descMeta.start}T00:00:00`);
     if (s && s < end) start = s;
   }
-  // 2. Todoist duration field.
   if (!start && task.duration) {
     const minutes =
       task.duration.unit === "day"
@@ -391,7 +515,6 @@ function taskBounds(task, descMeta) {
         : task.duration.amount;
     start = new Date(end.getTime() - minutes * 60 * 1000);
   }
-  // 3. added_at capped to 7 days, then a 3-day default bar.
   if (!start) {
     const addedAt =
       parseIsoDate(task.added_at) || parseIsoDate(task.created_at);
@@ -408,42 +531,59 @@ function taskBounds(task, descMeta) {
   return { start, end };
 }
 
-function toGanttTask(task, taskMap) {
-  const descMeta = parseDescription(task.description);
-  let bounds = taskBounds(task, descMeta);
-  if (!bounds) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    bounds = { start: today, end: new Date(today.getTime() + DAY_MS) };
+function convertToGanttData(tasks) {
+  const data = [];
+  const links = [];
+  let linkId = 1;
+
+  for (const task of tasks) {
+    const descMeta = parseDescription(task.description);
+    let bounds = taskBounds(task, descMeta);
+    if (!bounds) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      bounds = { start: today, end: new Date(today.getTime() + DAY_MS) };
+    }
+
+    data.push({
+      id: String(task.id),
+      text: task.content,
+      start_date: bounds.start,
+      end_date: bounds.end,
+      progress: 0,
+      open: true,
+      parent:
+        task.parent_id && currentTaskMap.has(String(task.parent_id))
+          ? String(task.parent_id)
+          : 0,
+      priorityClass: "priority-p" + (5 - (task.priority || 1)),
+      recurring: !!(task.due && task.due.is_recurring),
+      noDue: !task.due,
+    });
+
+    // Dependency arrows from description deps: line.
+    for (const depId of descMeta.deps) {
+      if (
+        currentTaskMap.has(String(depId)) &&
+        String(depId) !== String(task.parent_id)
+      ) {
+        links.push({
+          id: String(linkId++),
+          source: String(depId),
+          target: String(task.id),
+          type: "0",
+        });
+      }
+    }
   }
 
-  const priorityClass = `priority-p${5 - (task.priority || 1)}`;
-  const recurringClass = task.due && task.due.is_recurring ? " recurring" : "";
-  const noDueClass = !task.due ? " no-due" : "";
-
-  const depIds = new Set();
-  if (task.parent_id && taskMap.has(String(task.parent_id))) {
-    depIds.add(String(task.parent_id));
-  }
-  for (const d of descMeta.deps) {
-    if (taskMap.has(String(d))) depIds.add(String(d));
-  }
-
-  return {
-    id: String(task.id),
-    name: task.content,
-    start: formatDate(bounds.start),
-    end: formatDate(bounds.end),
-    progress: 0,
-    dependencies: [...depIds].join(","),
-    custom_class: `${priorityClass}${recurringClass}${noDueClass}`,
-  };
+  return { data, links };
 }
 
 function clearGantt() {
   els.empty.hidden = false;
-  els.gantt.innerHTML = "";
-  ganttInstance = null;
+  els.gantt.style.display = "none";
+  gantt.clearAll();
 }
 
 function renderGantt(tasks) {
@@ -456,17 +596,16 @@ function renderGantt(tasks) {
     setStatus(
       tasks.length
         ? "No tasks with due dates. Tick the checkbox to include undated tasks."
-        : "No tasks in this project.",
+        : "No tasks in the selected projects.",
       "info"
     );
     return;
   }
 
   els.empty.hidden = true;
-  els.gantt.innerHTML = "";
+  els.gantt.style.display = "block";
 
   currentTaskMap = new Map(filtered.map((t) => [String(t.id), t]));
-  const taskMap = currentTaskMap;
 
   const sorted = [...filtered].sort((a, b) => {
     const ap = a.parent_id ? 1 : 0;
@@ -477,79 +616,21 @@ function renderGantt(tasks) {
     return ad.localeCompare(bd);
   });
 
-  const ganttTasks = sorted.map((t) => toGanttTask(t, taskMap));
+  const { data, links } = convertToGanttData(sorted);
 
-  ganttInstance = new Gantt(els.gantt, ganttTasks, {
-    view_mode: els.viewMode.value,
-    bar_height: 24,
-    bar_corner_radius: 4,
-    padding: 18,
-    language: "en",
-    on_view_change: () => scrollToToday(),
-    on_click: (task) => {
-      const raw = currentTaskMap.get(String(task.id));
-      if (!raw) return;
-      if (linkState !== null) {
-        handleLinkClick(String(task.id), task.name);
-        return;
-      }
-      openDrawer(raw);
-    },
-    on_date_change: (task, start, end) => {
-      const raw = currentTaskMap.get(String(task.id));
-      if (raw) updateTaskDueDate(raw, end);
-    },
-    custom_popup_html: (task) => {
-      const src = currentTaskMap.get(String(task.id)) || {};
-      const pr = src.priority || 1;
-      const labels = (src.labels || []).join(", ") || "—";
-      const due =
-        (src.due && (src.due.string || src.due.date)) || "No due date";
-      const recurring =
-        src.due && src.due.is_recurring ? " <em>(recurring)</em>" : "";
-      return `
-        <div class="gantt-popup">
-          <h4>${escapeHtml(task.name)}</h4>
-          <div><strong>Due:</strong> ${escapeHtml(due)}${recurring}</div>
-          <div><strong>Priority:</strong> P${5 - pr}</div>
-          <div><strong>Labels:</strong> ${escapeHtml(labels)}</div>
-          ${
-            src.description
-              ? `<div class="desc">${escapeHtml(src.description)}</div>`
-              : ""
-          }
-          ${
-            src.app_url || src.url
-              ? `<div><a href="${src.app_url || src.url}" target="_blank" rel="noreferrer">Open in Todoist</a></div>`
-              : ""
-          }
-        </div>`;
-    },
-  });
-
-  scrollToToday();
-}
-
-function scrollToToday() {
-  requestAnimationFrame(() => {
-    const wrapper = els.gantt.closest(".gantt-wrapper");
-    if (!wrapper) return;
-    const today = els.gantt.querySelector(".today-highlight");
-    const targetX = today ? parseFloat(today.getAttribute("x")) || 0 : 0;
-    wrapper.scrollLeft = Math.max(0, targetX - 80);
-  });
+  gantt.clearAll();
+  gantt.parse({ data: data, links: links });
+  gantt.showDate(new Date());
 }
 
 async function updateTaskDueDate(task, end) {
   try {
     const due_date = formatDate(end);
-    setStatus(`Updating "${task.content}"…`);
+    setStatus(`Updating "${task.content}"\u2026`);
     await api(`/tasks/${task.id}`, {
       method: "POST",
       body: JSON.stringify({ due_date }),
     });
-    // Update in-memory; note recurring tasks keep their recurrence rule
-    // server-side and will show the next occurrence on reload.
     task.due = { ...(task.due || {}), date: due_date };
     setStatus(`Rescheduled "${task.content}" to ${due_date}.`, "success");
   } catch (err) {
@@ -558,49 +639,13 @@ async function updateTaskDueDate(task, end) {
   }
 }
 
-// ---------- Link mode ----------
+// ---------- Dependency write-back ----------
 
-function enterLinkMode() {
-  linkState = {};
-  els.linkTasks.classList.add("btn-active");
-  els.linkTasks.textContent = "Cancel linking";
-  setStatus("Link mode: click the task that must finish first.", "info");
-  els.gantt.closest(".gantt-wrapper").classList.add("link-mode");
-}
-
-function exitLinkMode() {
-  linkState = null;
-  els.linkTasks.classList.remove("btn-active");
-  els.linkTasks.textContent = "Link tasks";
-  els.gantt.closest(".gantt-wrapper").classList.remove("link-mode");
-  setStatus("", "");
-}
-
-function handleLinkClick(id, name) {
-  if (!linkState.sourceId) {
-    // First click: record the source ("must finish first") task.
-    linkState.sourceId = id;
-    linkState.sourceName = name;
-    setStatus(
-      `"${name}" will be the predecessor. Now click the task that depends on it.`,
-      "info"
-    );
-  } else if (linkState.sourceId === id) {
-    // Clicked the same bar twice: cancel.
-    exitLinkMode();
-  } else {
-    // Second click: create the arrow from source → this target.
-    createDependency(linkState.sourceId, id);
-    exitLinkMode();
-  }
-}
-
-async function createDependency(sourceId, targetId) {
+async function writeDependency(sourceId, targetId, ephemeralLinkId) {
   const target = currentTaskMap.get(targetId);
   if (!target) return;
 
   const desc = target.description || "";
-  // Look for an existing deps line to append to.
   const depsMatch = desc.match(
     /((?:^|\n)\s*(?:deps|depends|depends_on)\s*:\s*)([^\n]+)/i
   );
@@ -613,6 +658,8 @@ async function createDependency(sourceId, targetId) {
       .filter(Boolean);
     if (existing.includes(sourceId)) {
       setStatus("That dependency already exists.", "info");
+      // Remove the duplicate link dhtmlxGantt just drew.
+      gantt.deleteLink(ephemeralLinkId);
       return;
     }
     existing.push(sourceId);
@@ -625,7 +672,7 @@ async function createDependency(sourceId, targetId) {
   }
 
   try {
-    setStatus("Adding dependency…");
+    setStatus("Adding dependency\u2026");
     const updated = await api(`/tasks/${targetId}`, {
       method: "POST",
       body: JSON.stringify({ description: newDesc }),
@@ -638,15 +685,55 @@ async function createDependency(sourceId, targetId) {
     setStatus("Dependency added.", "success");
   } catch (err) {
     setStatus(`Failed to add dependency: ${err.message}`, "error");
+    gantt.deleteLink(ephemeralLinkId);
+  }
+}
+
+async function removeDependency(sourceId, targetId) {
+  const target = currentTaskMap.get(targetId);
+  if (!target) return;
+
+  const desc = target.description || "";
+  const depsMatch = desc.match(
+    /((?:^|\n)\s*(?:deps|depends|depends_on)\s*:\s*)([^\n]+)/i
+  );
+  if (!depsMatch) return;
+
+  const existing = depsMatch[2]
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const filtered = existing.filter((id) => id !== sourceId);
+
+  let newDesc;
+  if (filtered.length) {
+    newDesc = desc.replace(
+      depsMatch[0],
+      `${depsMatch[1]}${filtered.join(", ")}`
+    );
+  } else {
+    // Remove the entire deps: line.
+    newDesc = desc.replace(/(?:^|\n)\s*(?:deps|depends|depends_on)\s*:[^\n]*/i, "").trim();
+  }
+
+  try {
+    setStatus("Removing dependency\u2026");
+    const updated = await api(`/tasks/${targetId}`, {
+      method: "POST",
+      body: JSON.stringify({ description: newDesc }),
+    });
+    if (updated) {
+      const idx = currentTasks.findIndex((t) => String(t.id) === targetId);
+      if (idx >= 0) currentTasks[idx] = updated;
+    }
+    setStatus("Dependency removed.", "success");
+  } catch (err) {
+    setStatus(`Failed to remove dependency: ${err.message}`, "error");
+    renderGantt(currentTasks);
   }
 }
 
 // ---------- Task drawer ----------
-//
-// A side panel that opens when a Gantt bar is clicked. Lets the user edit
-// the task in-place (content, description, due date, priority, labels),
-// mark it complete, or open it in a real Todoist popup window. All changes
-// go through REST API v1.
 
 let drawerTask = null;
 
@@ -692,7 +779,7 @@ function drawerMetaHtml(task) {
   parts.push(
     `ID: <code style="user-select:all">${escapeHtml(String(task.id))}</code>`
   );
-  return parts.join(" • ");
+  return parts.join(" \u2022 ");
 }
 
 els.drawer.addEventListener("click", (e) => {
@@ -719,7 +806,7 @@ els.drawerForm.addEventListener("submit", async (e) => {
     body.due_string = "no date";
   }
   try {
-    setStatus(`Saving "${body.content}"…`);
+    setStatus(`Saving "${body.content}"\u2026`);
     const updated = await api(`/tasks/${drawerTask.id}`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -740,7 +827,7 @@ els.drawerComplete.addEventListener("click", async () => {
   if (!drawerTask) return;
   if (!confirm(`Mark "${drawerTask.content}" as complete?`)) return;
   try {
-    setStatus("Marking complete…");
+    setStatus("Marking complete\u2026");
     await api(`/tasks/${drawerTask.id}/close`, { method: "POST" });
     currentTasks = currentTasks.filter(
       (t) => String(t.id) !== String(drawerTask.id)

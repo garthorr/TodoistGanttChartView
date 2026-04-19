@@ -7,8 +7,8 @@
 <p align="center">
   A lightweight, self-hostable Gantt viewer for your
   <a href="https://todoist.com/">Todoist</a> projects. Powered by the current
-  Todoist REST API v2 and
-  <a href="https://frappe.io/gantt">Frappe Gantt</a>.
+  Todoist REST API v1 and
+  <a href="https://dhtmlx.com/docs/products/dhtmlxGantt/">dhtmlxGantt</a>.
 </p>
 
 No backend, no build step, no tracking. Open `index.html` (or run the Docker image) and go.
@@ -17,17 +17,19 @@ No backend, no build step, no tracking. Open `index.html` (or run the Docker ima
 
 ## Features
 
-- Current **Todoist REST API v2** (Bearer token auth) — no more dead v1 endpoints
+- Current **Todoist REST API v1** (Bearer token auth)
 - Reads native **due dates, datetimes, durations, and recurrence** (no more stuffing `(YYYY-MM-DD)` into task names)
 - **Drag a bar** to reschedule a task — writes back to Todoist
 - **Click a bar** to open an **in-app side drawer** that edits the task inline (title, description, due date, priority, labels)
 - **Mark complete** from the drawer (`POST /tasks/{id}/close`)
 - **Open popup window** button — pops out the real Todoist task page in a sized floating window (Todoist forbids iframe embedding, so a popup is the closest "embedded" experience)
+- **Drag between bars** to draw a **dependency arrow** — writes back to Todoist via a `deps:` convention in the task description (see below). Delete a link by double-clicking its arrow.
 - Bars colored by **priority** (P1–P4); recurring tasks are striped
 - **Start dates & dependencies via task description** — Todoist has no native start-date or depends-on field, so Ganttist parses simple conventions (see below)
 - **Auto-scrolls to today** so upcoming work dominates the view
-- Project picker with hierarchy and an **"All projects"** view
-- View modes: Quarter Day / Half Day / Day / Week / Month
+- **Multi-project chart** — add multiple projects to see all their tasks on one Gantt chart
+- Task list grid with collapsible **parent/subtask hierarchy**
+- View modes: **Hour** / 6 Hours / 12 Hours / Day / Week / Month
 - Optionally include tasks **without a due date**
 - Token is stored only in your browser's `localStorage`
 - **Dark-mode aware** (respects `prefers-color-scheme`)
@@ -76,7 +78,7 @@ Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the pro
 - `css/style.css` — styling, dark-mode aware
 - `images/logo.svg`, `images/favicon.svg` — custom mark (Gantt-bars in a rounded red square, derivative rather than a copy of the Todoist logo)
 - `Dockerfile`, `nginx.conf`, `docker-compose.yml` — self-hosting
-- Frappe Gantt is loaded from jsDelivr
+- dhtmlxGantt (GPL v2 Standard Edition) is loaded from jsDelivr
 
 ## Start dates & dependencies
 
@@ -97,7 +99,7 @@ Parent/subtask relationships are picked up automatically — a subtask always de
 ## Known limitations / TODO
 
 - **Verify round-trip writes end-to-end.** Drag-to-reschedule, drawer saves, and mark-complete all POST to the Todoist API, but I haven't yet spot-checked that the changes actually land on every Todoist surface (web, mobile, shared projects). On the list.
-- Frappe Gantt doesn't support cyclic dependencies; it'll just render odd arrows. Don't make a `deps:` cycle.
+- Cyclic dependencies will confuse the layout. Don't create `deps:` cycles.
 - There's no true zoom-to-fit yet — the view mode selector is the zoom control.
 
 ## Todoist API notes
