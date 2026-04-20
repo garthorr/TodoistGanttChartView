@@ -547,23 +547,27 @@ function taskBounds(task, descMeta) {
   const due = task.due;
   const defaultMs = getDefaultDurationMs();
 
-  // Parse due date as bar START (when work begins).
-  // Todoist returns due.datetime in UTC. If the UTC time is exactly midnight
-  // (T00:00:00Z), Todoist is signalling a date-only task — use due.date at
-  // local midnight instead, otherwise UTC midnight becomes noon for UTC+12 users.
+  // Parse due date as bar START.
+  // API v1: datetime is in due.date as "YYYY-MM-DDTHH:MM:SS" (local, no Z)
+  //         or "YYYY-MM-DD" for date-only tasks.
+  // API v2: due.datetime is a separate UTC field (kept for compatibility).
   let startFromDue = null;
-  if (due && due.datetime) {
-    const dt = parseIsoDate(due.datetime);
-    if (dt) {
-      const isDateOnly =
-        dt.getUTCHours() === 0 &&
-        dt.getUTCMinutes() === 0 &&
-        dt.getUTCSeconds() === 0;
-      startFromDue = isDateOnly ? localDate(due.date) : dt;
+  const dueDateStr = (due && due.datetime) || (due && due.date) || null;
+  if (dueDateStr) {
+    if (dueDateStr.includes("T")) {
+      const dt = parseIsoDate(dueDateStr);
+      if (dt) {
+        // API v2 sends UTC (Z suffix) — midnight UTC means date-only, use local midnight.
+        const utcMidnight =
+          dueDateStr.endsWith("Z") &&
+          dt.getUTCHours() === 0 &&
+          dt.getUTCMinutes() === 0 &&
+          dt.getUTCSeconds() === 0;
+        startFromDue = utcMidnight ? localDate(due.date.slice(0, 10)) : dt;
+      }
+    } else {
+      startFromDue = localDate(dueDateStr);
     }
-  }
-  if (!startFromDue && due && due.date) {
-    startFromDue = localDate(due.date);
   }
 
   // Parse deadline as bar END (hard deadline).
