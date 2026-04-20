@@ -365,6 +365,13 @@ function formatDatetime(d) {
   return `${formatDate(d)}T${hh}:${mi}:00`;
 }
 
+// Format a Date as the string dhtmlxGantt expects: "YYYY-MM-DD HH:MM"
+function fmtGanttDate(d) {
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${formatDate(d)} ${hh}:${mi}`;
+}
+
 // ---------- Projects ----------
 
 async function loadProjects() {
@@ -614,8 +621,6 @@ function convertToGanttData(tasks) {
   const links = [];
   let linkId = 1;
 
-  const fmtDate = gantt.date.date_to_str(gantt.config.date_format);
-
   for (const task of tasks) {
     const descMeta = parseDescription(task.description);
     let bounds = taskBounds(task, descMeta);
@@ -628,8 +633,8 @@ function convertToGanttData(tasks) {
     data.push({
       id: String(task.id),
       text: task.content,
-      start_date: fmtDate(bounds.start),
-      end_date: fmtDate(bounds.end),
+      start_date: fmtGanttDate(bounds.start),
+      end_date: fmtGanttDate(bounds.end),
       progress: 0,
       open: true,
       parent:
