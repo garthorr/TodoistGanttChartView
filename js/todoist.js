@@ -711,21 +711,21 @@ function renderGantt(tasks) {
 async function updateTaskAfterDrag(raw, ganttTask) {
   try {
     const dueDatetime = formatDatetime(ganttTask.start_date);
-    const deadlineDate = formatDate(ganttTask.end_date);
+    const payload = { due_datetime: dueDatetime };
+    if (raw.deadline) {
+      payload.deadline_date = formatDate(ganttTask.end_date);
+    }
     setStatus(`Updating "${raw.content}"\u2026`);
     const updated = await api(`/tasks/${raw.id}`, {
       method: "POST",
-      body: JSON.stringify({ due_datetime: dueDatetime, deadline_date: deadlineDate }),
+      body: JSON.stringify(payload),
     });
     if (updated) {
       const idx = currentTasks.findIndex((t) => String(t.id) === String(raw.id));
       if (idx >= 0) currentTasks[idx] = updated;
       currentTaskMap.set(String(raw.id), updated);
     }
-    setStatus(
-      `Rescheduled "${raw.content}": start ${dueDatetime}, deadline ${deadlineDate}.`,
-      "success"
-    );
+    setStatus(`Rescheduled "${raw.content}" to ${dueDatetime}.`, "success");
   } catch (err) {
     setStatus(`Failed to reschedule: ${err.message}`, "error");
     if (activeProjects.length) loadAllTasks();
@@ -830,21 +830,48 @@ async function removeDependency(sourceId, targetId) {
 
 let drawerTask = null;
 
+function parseDueDateTimeFields(due) {
+  const dateStr = (due && due.datetime) || (due && due.date) || "";
+  if (dateStr.includes("T")) {
+    const dt = parseIsoDate(dateStr);
+    if (dt) {
+      return {
+        date: formatDate(dt),
+        time: `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`,
+      };
+    }
+  }
+  return { date: dateStr.slice(0, 10), time: "" };
+}
+
 function openDrawer(task) {
   drawerTask = task;
   const f = els.drawerForm.elements;
   els.drawerTitle.textContent = task.content;
   f.content.value = task.content;
   f.description.value = task.description || "";
-  if (task.due && task.due.datetime) {
-    const dt = new Date(task.due.datetime);
-    f.due_date.value = formatDate(dt);
-    f.due_time.value = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+
+  const dueFields = parseDueDateTimeFields(task.due);
+  f.due_date.value = dueFields.date;
+  f.due_time.value = dueFields.time;
+
+  if (task.deadline) {
+    const dlFields = parseDueDateTimeFields(task.deadline);
+    f.deadline_date.value = dlFields.date;
+    f.deadline_time.value = dlFields.time;
   } else {
-    f.due_date.value = (task.due && task.due.date) || "";
-    f.due_time.value = "";
+    f.deadline_date.value = "";
+    f.deadline_time.value = "";
   }
+
   f.priority.value = String(task.priority || 1);
+  if (task.duration) {
+    f.duration_amount.value = task.duration.amount;
+    f.duration_unit.value = task.duration.unit;
+  } else {
+    f.duration_amount.value = "";
+    f.duration_unit.value = "minute";
+  }
   f.labels.value = (task.labels || []).join(", ");
   els.drawerOpen.href = task.app_url || task.url || "#";
   els.drawerMeta.innerHTML = drawerMetaHtml(task);
@@ -908,6 +935,19 @@ els.drawerForm.addEventListener("submit", async (e) => {
     }
   } else if (drawerTask.due) {
     body.due_string = "no date";
+  }
+  if (f.deadline_date.value) {
+    if (f.deadline_time.value) {
+      body.deadline_datetime = `${f.deadline_date.value}T${f.deadline_time.value}:00`;
+    } else {
+      body.deadline_date = f.deadline_date.value;
+    }
+  } else if (drawerTask.deadline) {
+    body.deadline_string = "no deadline";
+  }
+  if (f.duration_amount.value && Number(f.duration_amount.value) > 0) {
+    body.duration = Number(f.duration_amount.value);
+    body.duration_unit = f.duration_unit.value;
   }
   try {
     setStatus(`Saving "${body.content}"\u2026`);

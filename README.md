@@ -78,38 +78,55 @@ Put it behind your own reverse proxy (Caddy, Traefik, nginx) by pointing the pro
 - `css/style.css` — styling, dark-mode aware
 - `images/logo.svg`, `images/favicon.svg` — custom mark (Gantt-bars in a rounded red square, derivative rather than a copy of the Todoist logo)
 - `Dockerfile`, `nginx.conf`, `docker-compose.yml` — self-hosting
-- dhtmlxGantt (GPL v2 Standard Edition) is loaded from jsDelivr
+- dhtmlxGantt (GPL v2 Standard Edition) is bundled locally via the Dockerfile
 
-## Start dates & dependencies
+## How bars map to Todoist fields
 
-Todoist tasks only have a due date, not a start date or a dependency field. Rather than invent a separate metadata store, Ganttist reads a couple of simple conventions from the task description:
+| Todoist field | Gantt bar edge | Notes |
+| --- | --- | --- |
+| **Due date / datetime** | **Left edge** (start) | When work begins. In hourly views, the specific time is used. |
+| **Deadline** | **Right edge** (end) | Hard deadline. Only used when set in Todoist. |
+| **Duration** | **Bar width** | Todoist's native `duration` field (minutes or days). |
+| **Default task length** | **Fallback width** | UI control (15 min – 3 days). Used when no duration or deadline is set. Persisted in localStorage. |
+
+Priority chain for the bar's left edge: `start:` in description → `due.datetime` → `due.date` at local midnight.
+
+Priority chain for the bar's right edge: `deadline` → `start + duration` → `start + default task length`.
+
+Parent tasks with subtasks render as darker **summary bars** (bold text, thicker border) so they're visually distinct from leaf tasks.
+
+## Dependencies & description conventions
+
+Todoist has no native dependency field. Ganttist reads simple conventions from the task description:
 
 ```
 start: 2026-04-10
 deps: 7123456789, 7123456790
 ```
 
-- `start: YYYY-MM-DD` — pins the bar's left edge. Without it, Ganttist falls back to the task's duration field, then to its creation date (capped at 7 days back), then to a 3-day default bar.
+- `start: YYYY-MM-DD` — overrides the due-date start. Pins the bar's left edge to a specific date.
 - `deps:` (also accepts `depends:` or `depends_on:`) — comma-or-space-separated list of Todoist task IDs that must finish first. Drawn as arrows between bars. You can grab a task's ID from the drawer's meta line, or from the end of its Todoist URL.
 
 Lines are matched case-insensitively and can appear anywhere in the description. Everything else in the description is left alone.
 
 Parent/subtask relationships are picked up automatically — a subtask always depends on its parent, even without a `deps:` line.
 
-## Known limitations / TODO
+## Known limitations
 
-- **Verify round-trip writes end-to-end.** Drag-to-reschedule, drawer saves, and mark-complete all POST to the Todoist API, but I haven't yet spot-checked that the changes actually land on every Todoist surface (web, mobile, shared projects). On the list.
 - Cyclic dependencies will confuse the layout. Don't create `deps:` cycles.
 - There's no true zoom-to-fit yet — the view mode selector is the zoom control.
+- Todoist's API may return `null` for the `duration` field even when a time range is displayed in the Todoist UI. In that case, the default task length is used.
 
 ## Todoist API notes
 
-- Projects: `GET https://api.todoist.com/rest/v2/projects`
-- Tasks: `GET https://api.todoist.com/rest/v2/tasks?project_id=…`
-- Update: `POST https://api.todoist.com/rest/v2/tasks/{id}` with e.g. `{ "due_date": "YYYY-MM-DD" }`
-- Complete: `POST https://api.todoist.com/rest/v2/tasks/{id}/close`
+- Projects: `GET https://api.todoist.com/api/v1/projects`
+- Tasks: `GET https://api.todoist.com/api/v1/tasks?project_id=…`
+- Update: `POST https://api.todoist.com/api/v1/tasks/{id}` with e.g. `{ "due_datetime": "YYYY-MM-DDTHH:MM:SS" }`
+- Complete: `POST https://api.todoist.com/api/v1/tasks/{id}/close`
 
 All calls send `Authorization: Bearer <your-token>`.
+
+The API returns `due.date` as either `"YYYY-MM-DD"` (date-only) or `"YYYY-MM-DDTHH:MM:SS"` (with local time, no timezone suffix). Ganttist detects the format automatically.
 
 ### Direct vs. proxied calls
 
@@ -117,7 +134,7 @@ Ganttist works in two modes:
 
 | Mode | When | How requests flow |
 | --- | --- | --- |
-| **Proxied** (recommended) | Serving via the included Docker image / `nginx.conf` | Browser → `/api/rest/v2/...` → nginx → `api.todoist.com` (no CORS) |
+| **Proxied** (recommended) | Serving via the included Docker image / `nginx.conf` | Browser → `/api/v1/...` → nginx → `api.todoist.com` (no CORS) |
 | **Direct** (fallback) | Opening `index.html` via `file://` or a static server without the proxy | Browser → `api.todoist.com` (requires Todoist's CORS to cooperate with your browser) |
 
 The app auto-detects which mode is available when you first click **Load projects**. Check the DevTools console — it logs which base it chose.
