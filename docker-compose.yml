@@ -3,13 +3,13 @@ services:
     build: .
     image: ganttist:latest
     container_name: ganttist
-    ports:
-      - "8080:80"
     restart: unless-stopped
+
     read_only: true
     tmpfs:
       - /var/cache/nginx
       - /var/run
+
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -19,3 +19,18 @@ services:
       - SETUID
       - SETGID
       - NET_BIND_SERVICE
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ganttist.rule=Host(`ganttist.home.tastymath.com`)"
+      - "traefik.http.routers.ganttist.entrypoints=websecure"
+      - "traefik.http.routers.ganttist.tls=true"
+      - "traefik.http.routers.ganttist.tls.certresolver=le"
+      - "traefik.http.services.ganttist.loadbalancer.server.port=80"
+
+    networks:
+      - traefik
+
+networks:
+  traefik:
+    external: true
