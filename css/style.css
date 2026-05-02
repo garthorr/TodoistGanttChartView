@@ -440,6 +440,7 @@ body {
 .drawer-field input[type="text"],
 .drawer-field input[type="date"],
 .drawer-field input[type="time"],
+.drawer-field input[type="number"],
 .drawer-field textarea,
 .drawer-field select {
   padding: 8px 10px;

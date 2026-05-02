@@ -151,6 +151,16 @@
               </div>
             </label>
             <label class="drawer-field">
+              <span>Deadline</span>
+              <div class="date-time-row">
+                <input type="date" name="deadline_date" />
+                <input type="time" name="deadline_time" />
+              </div>
+            </label>
+          </div>
+
+          <div class="drawer-row">
+            <label class="drawer-field">
               <span>Priority</span>
               <select name="priority">
                 <option value="4">P1 (urgent)</option>
@@ -158,6 +168,16 @@
                 <option value="2">P3</option>
                 <option value="1">P4 (none)</option>
               </select>
+            </label>
+            <label class="drawer-field">
+              <span>Duration</span>
+              <div class="date-time-row">
+                <input type="number" name="duration_amount" min="1" max="9999" style="width:60px" />
+                <select name="duration_unit">
+                  <option value="minute">min</option>
+                  <option value="day">days</option>
+                </select>
+              </div>
             </label>
           </div>
 
